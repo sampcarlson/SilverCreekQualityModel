@@ -1,6 +1,12 @@
 library(RPostgreSQL)
+library(RColorBrewer)
 
-
+getColor=function(reps){
+  allColors=brewer.pal(12,"Set3")
+  reps=reps %% length(allColors)
+  return(allColors[reps])
+  
+}
 
 conn=function(){    #checks for db connection object ('scdb') in global env, creates if necessary, returns and places in global enc
   
@@ -52,13 +58,54 @@ getSeriesData=function(seriesids,dataSeriesList=dataSeries){
 }
 
 
-plotDataSeries=function(seriesData){  #currently limited to 1 metric
-  if(length(unique(seriesData$metricid))>1){
-    print(paste0("Plotting only ",seriesData$metric[seriesData$metricid==unique(seriesData$metricid)[1]][1],", ignoring all other metrics"))
-  }
-  seriesData=seriesData[seriesData$metricid == unique(seriesData$metricid)[1],]
-  plot(seriesData$value~seriesData$datetime,type="n")
-  colorScheme=data.frame(seriesid=unique(seriesData$seriesid),color=sample(colors(),length(unique(seriesData$seriesid))))
-  for(i in 1:length(unique(seriesData$seriesid))){}
+ makePlot=function(plotData){
   
+  plotData=plotData[complete.cases(plotData[,c("metric","value","datetime")]),]
+  
+  xmin=min(plotData$datetime)
+  xmax=max(plotData$datetime)
+  metrics=unique(plotData$metric)
+  #set up plot area:
+  firstLine=plotData[plotData$metric==metrics[1],]
+  firstLine=firstLine[firstLine$locationid==firstLine$locationid[1],]
+  
+  leftMargin=4*length(metrics)
+  bottomMargin=3+length(metrics)
+  par(mar=c(bottomMargin,leftMargin,2,0))
+  
+  plot(firstLine$value~firstLine$datetime,type="n",xlim=c(xmin,xmax),yaxt="n",ylab="",xlab="")
+  
+  metricLty=1:length(metrics)
+  
+  axisLine=0
+  
+  for(metric in metrics){
+    thisPlotData=plotData[plotData$metric==metric,]
+    
+    
+    par(new=T)
+    plot(firstLine$value~firstLine$datetime,type="n",xlim=c(xmin,xmax),ylim=c(min(thisPlotData$value),max(thisPlotData$value)),axes=F,ylab="",xlab="")
+    
+    rep=1
+    for(location in unique(thisPlotData$locationid)){
+      thisLineData=thisPlotData[thisPlotData$locationid==location,]
+      thisLineData=thisLineData[order(thisLineData$datetime),]
+      lines(thisLineData$value~thisLineData$datetime,col=getColor(rep),lty=metricLty[metrics==metric],lwd=2)
+      rep=rep+1
+    }
+    
+    axis(side=2,line=axisLine)
+    mtext(text=metric, side=2, line=axisLine+2,font=2)
+    axisLine=axisLine+4
+    
+  }
+  par(xpd=T)
+  par(new=T)
+  par(mar=c(.1,2,2,2))
+  plot.new()
+  
+  legend(x="bottom",legend=rev(metrics),lty=rev(metricLty),lwd=2,ncol=2,bty="n")
 }
+
+
+
