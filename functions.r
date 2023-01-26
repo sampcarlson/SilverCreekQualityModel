@@ -1,5 +1,6 @@
 library(RPostgreSQL)
 library(RColorBrewer)
+library(sf)
 
 getColor=function(reps){
   allColors=brewer.pal(12,"Set3")
@@ -58,7 +59,7 @@ getSeriesData=function(seriesids,dataSeriesList=dataSeries){
 }
 
 
- makePlot=function(plotData){
+makePlot=function(plotData){
   
   plotData=plotData[complete.cases(plotData[,c("metric","value","datetime")]),]
   
@@ -107,5 +108,25 @@ getSeriesData=function(seriesids,dataSeriesList=dataSeries){
   legend(x="bottom",legend=rev(metrics),lty=rev(metricLty),lwd=2,ncol=2,bty="n")
 }
 
+
+getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL,returnData=F){
+  if(!is.null(outflowLocationID)){
+    watershedid=dbGetQuery(conn(),paste0("SELECT watershedid FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"';"))$watershedid
+  }
+  
+  locations=dbGetQuery(conn(),paste0("SELECT * FROM locations where ST_WITHIN(locations.geometry, (SELECT geom FROM watersheds WHERE watershedid = '",watershedid,"'));"))
+  
+  metricString=""
+  if(!is.null(metricNames)){
+    metricString = paste0(" AND metric IN ('",paste(metricNames,collapse="', '"),"')")
+  }
+  
+  if(returnData){
+    locationData=dbGetQuery(conn(),paste0("SELECT * FROM data WHERE data.locationid IN ('",paste(locations$locationid,collapse="', '"),"')",metricString,";"))
+    locations=merge(locationData,locations)
+  }
+  
+  return(locations)
+}
 
 
