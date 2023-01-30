@@ -106,20 +106,28 @@ makePlot=function(plotData){
   plot.new()
   
   legend(x="bottom",legend=rev(metrics),lty=rev(metricLty),lwd=2,ncol=2,bty="n")
+  
+  par(xpd=par()$xpd)
+  par(mar=par()$mar)
+  par(oma=par()$oma)
 }
 
 
 getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL,returnData=F){
-  if(!is.null(outflowLocationID)){
-    watershedid=dbGetQuery(conn(),paste0("SELECT watershedid FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"';"))$watershedid
-  }
-  
-  locations=dbGetQuery(conn(),paste0("SELECT * FROM locations where ST_WITHIN(locations.geometry, (SELECT geom FROM watersheds WHERE watershedid = '",watershedid,"'));"))
-  
   metricString=""
   if(!is.null(metricNames)){
     metricString = paste0(" AND metric IN ('",paste(metricNames,collapse="', '"),"')")
   }
+  
+  if(!is.null(outflowLocationID)){
+    watershedid=dbGetQuery(conn(),paste0("SELECT watershedid FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"';"))$watershedid
+  }
+  
+  locations=dbGetQuery(conn(),paste0("SELECT DISTINCT locations.locationid, name, geometry, sourcenote, sitenote, source_site_id, metric, metricid 
+                                     FROM locations LEFT JOIN data ON locations.locationid = data.locationid 
+                                     WHERE ST_WITHIN(locations.geometry, (SELECT geom FROM watersheds WHERE watershedid = '",watershedid,"'))",metricString,";"))
+  
+
   
   if(returnData){
     locationData=dbGetQuery(conn(),paste0("SELECT * FROM data WHERE data.locationid IN ('",paste(locations$locationid,collapse="', '"),"')",metricString,";"))
