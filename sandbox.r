@@ -35,16 +35,17 @@ makePlot(seriesData)
 #w148$outflowlocationid[1]=148
 
 #watersheds=w148[,c("outflowlocationid","geom")]
-#watersheds$watershedid="DEFAULT"
-
 #st_write(watersheds,conn(),append=T)
 
+w1=st_read("~/Downloads/wshed1.gpkg")
+w1$outflowlocationid[1]=1
+watersheds=w1[,c('outflowlocationid','geom')]
+st_write(watersheds,conn(),append = T)
 
-getInWatershed(watershedID=1)
 
 
 #simple flow index
-scFlow=getInWatershed(outflowLocationID = 148,metricNames = "flow",returnData=T)
+scFlow=getInWatershed(outflowLocationID = 1,metricNames = "flow",returnData=T)
 makePlot(scFlow)
 scFlow$day=as.Date(scFlow$datetime)
 scFlow=scFlow[complete.cases(scFlow[,c("value","day")]),]
@@ -69,3 +70,10 @@ plot3d(flowAndTemp$value.flow,flowAndTemp$value.temp,flowAndTemp$doy,xlab="flow"
 
 flowAndTemp$monthColor=brewer.pal(6,"YlGnBu")[round(flowAndTemp$month/2)+1]
 plot(flowAndTemp$value.temp~flowAndTemp$value.flow,col=flowAndTemp$monthColor,pch=1)
+
+
+#late summer
+scFlowData=getInWatershed(outflowLocationID = 1,metricNames = "flow",returnData=T)
+scFlowData=scFlowData[scFlowData$datetime>(as.Date("2020-7-1")) & scFlowData$datetime>(as.Date("2020-8-1")),]
+
+makePlot(scFlowData)

@@ -1,6 +1,7 @@
 library(RPostgreSQL)
 library(RColorBrewer)
 library(sf)
+library(terra)
 
 getColor=function(reps){
   allColors=brewer.pal(12,"Set3")
@@ -127,7 +128,7 @@ getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL
                                      FROM locations LEFT JOIN data ON locations.locationid = data.locationid 
                                      WHERE ST_WITHIN(locations.geometry, (SELECT geom FROM watersheds WHERE watershedid = '",watershedid,"'))",metricString,";"))
   
-
+  
   
   if(returnData){
     locationData=dbGetQuery(conn(),paste0("SELECT * FROM data WHERE data.locationid IN ('",paste(locations$locationid,collapse="', '"),"')",metricString,";"))
@@ -138,3 +139,82 @@ getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL
 }
 
 
+flowWtMeanRes=function(flows,resValues){
+  #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
+  #note that max(Qs) is just outflow Q
+  if (length(flows)!=length(resValues)){
+    print("differing number of flow and residence values")
+    return(NULL)
+  } else {
+    meanRes=0
+    for(i in 1:length(flows)){
+      meanRes=meanRes+resValues[i]*flows[i]/max(flows)
+    }
+    return(meanRes)
+  }
+}
+
+snapPointsToLines=function(points_to_snap,target_lines,maxSnapDistance=100){
+  #First define points along lines to snap to...
+  snapPoints=st_line_sample(st_cast(st_zm(target_lines),"LINESTRING"),density=1)#'density' snap points per meter
+  
+  #snap array pts to pts along network lines:
+  #st_snap to the line directly doesn't work, st_snap to all sampled points also fails.  
+  
+  for(i in 1:nrow(points_to_snap)){ #iterate through points
+    near=st_nearest_points(points_to_snap[i,],snapPoints)  #find line to all snapPoints
+    thisLocation=st_geometry( 
+      st_cast(near[which.min(st_length(near))],"POINT")[2] #find geometry of nearest snap point. [2] returns 'to' point of st_nearest line
+    )  
+    
+    if(as.numeric(st_distance(points_to_snap[i,],thisLocation))<maxSnapDistance){
+      print(paste("Point",points_to_snap$name[i],"snapped to target line at distance of", round(st_distance(points_to_snap[i,],thisLocation),1), "meters"))
+      st_geometry( points_to_snap[i,] ) = st_geometry( thisLocation )
+    }  else{
+      print(paste("Point",points_to_snap$name[i],"not snapped due to excessive distance of", round(st_distance(points_to_snap[i,],thisLocation),1), "meters"))
+    }
+  }
+  return(points_to_snap)
+}
+
+
+getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanceIncriment=NULL){
+  if(is.null(distanceIncriment)){
+    distanceIncriment=as.numeric(mean(res(uaaRast)))
+  }
+  getStr_worker=function(location,uaaRast,distance){
+    locationArea=st_buffer(location,dist=distance)
+    areaInfo=extract(uaaRast,vect(locationArea),cells=T)
+    names(areaInfo)=c("ID","uaa","cell")
+    return(areaInfo)
+  }
+  done=F
+  distance=distanceIncriment*1
+  maxCoords=NULL
+  while(done==F){
+    areaInfo=getStr_worker(location,uaaRast,distance)
+    print(paste("distance:",distance))
+    print(paste("Max UAA:",round(max(areaInfo$uaa))))
+    if(max(areaInfo$uaa)>uaaThreshold){ #found a pixel w/ sufficient uaa
+      maxCell=areaInfo[which.max(areaInfo$uaa),]$cell
+      maxCoords=xyFromCell(uaa,maxCell)
+      done=T
+    }
+    if(distance >= maxDistance){
+      done=T
+    }
+    distance = distance + distanceIncriment
+  }
+  #create point geometry, transform from raster crs to location CRS
+  if(!is.null(maxCoords)){
+    print(maxCoords)
+    #maxCoords=as.matrixmaxCoords)
+    #print(maxCoords)
+    thisPoint=st_point(maxCoords)
+
+    thisPoint=st_sfc(thisPoint,crs=st_crs(uaaRast))
+    thisPoint=st_transform(thisPoint,crs=st_crs(location))
+    maxCoords=thisPoint
+  }
+  return(maxCoords)
+}
