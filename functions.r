@@ -218,3 +218,53 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
   }
   return(maxCoords)
 }
+
+
+
+grassTableToDF=function(grassDF){
+  return (read.table(text=grassDF,header=T,sep="|",stringsAsFactors = F))
+}
+
+addRasterIfAbsent=function(addRaster,grassRasterName){
+  if(!grassRasterName %in% stringexecGRASS("g.list type=raster",intern = T)) {
+    write_RAST(addRaster,grassRasterName)
+    print(paste0("raster '", grassRasterName, "' added to GRASS"))
+  }
+}
+
+#initialize a re-useable workspace based on a raster.  requires terra, rgrass
+InitGrass_byRaster=function(baseRaster,grassRasterName,grassPath){
+  
+  ##these are necessary to fully trash a pervious grass session
+  unlink_.gislock()
+  remove_GISRC()
+  
+
+  
+  #initialize grass.  SG does not do what I want it to do
+  initGRASS(override=TRUE,mapset="PERMANENT",remove_GISRC = T, SG=baseRaster)
+  #note that has no info (yet) about projection, extent, or resolution
+  
+  #Use the projection of the raster - save projection definition in a format GRASS likes
+  p=crs(baseRaster,proj=T)
+  #set projection from RGDAL's interpetation of raster proj4string
+  execGRASS("g.proj",flags="c",parameters = list(proj4=p))
+  
+  #actually write the raster to GRASS
+  write_RAST(baseRaster,vname=grassRasterName)
+  
+  #set the resolution
+  execGRASS("g.region",raster=grassRasterName)
+  
+  #see the region as lat-long or xy
+  execGRASS("g.region", flags='l')
+  execGRASS("g.region", flags='p')
+  
+  stringexecGRASS("g.gisenv")
+  stringexecGRASS("g.proj -p")
+}
+
+
+
+
+
