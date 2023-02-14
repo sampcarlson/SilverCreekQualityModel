@@ -1,5 +1,6 @@
 library(RPostgreSQL)
 library(RColorBrewer)
+library(rgrass)
 library(sf)
 library(terra)
 
@@ -193,8 +194,8 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
   maxCoords=NULL
   while(done==F){
     areaInfo=getStr_worker(location,uaaRast,distance)
-    print(paste("distance:",distance))
-    print(paste("Max UAA:",round(max(areaInfo$uaa))))
+    #print(paste("distance:",distance))
+    #print(paste("Max UAA:",round(max(areaInfo$uaa))))
     if(max(areaInfo$uaa)>uaaThreshold){ #found a pixel w/ sufficient uaa
       maxCell=areaInfo[which.max(areaInfo$uaa),]$cell
       maxCoords=xyFromCell(uaa,maxCell)
@@ -264,7 +265,42 @@ InitGrass_byRaster=function(baseRaster,grassRasterName,grassPath){
   stringexecGRASS("g.proj -p")
 }
 
-
+calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeFlowDir_scCarve.tif")){
+  if(!("sf" %in% class(pointLocation))){
+    stop("function requires sf point object")
+  }
+  
+  if(!(pointLocation$locationid %in% dbGetQuery(conn(),"SELECT outflowlocationid FROM watersheds;")$outflowlocationid)){
+    
+    addRasterIfAbsent(flowDir,"flowDir")
+    
+    print(paste("Determining watershed for point",pointLocation$name,"with geometry",paste(st_coordinates(pointLocation),collapse=", ")))
+    
+    #vectors must be SpatVector to be written to grass
+    #write_VECT(vect(pointLocation),"wshedPoint",flags=c("overwrite"))
+    
+    if(!crs(flowDir,proj=T)==st_crs(pointLocation,parameters=T)$proj4string){
+      #could automatically transform point to raster crs
+      stop("point crs does not match raster crs")
+    }
+    
+    execGRASS("r.water.outlet",flags="overwrite", parameters=list(input="flowDir",output="thisWatershedRast",coordinates=c(st_coordinates(pointLocation)[1,"X"],st_coordinates(pointLocation)[1,"Y"])))
+    execGRASS("r.to.vect",flags=c("s","overwrite"),parameters=list(input="thisWatershedRast",output="thisWatershedVect",type="area"))
+    
+    w=st_as_sf(read_VECT("thisWatershedVect"))
+    if(nrow(w)>1){
+      w$area=st_area(w)
+      w=w[order(w$area,decreasing = T)]
+      w=w[1,]
+    }
+    
+    
+    w$outflowlocationid=pointLocation$locationid
+    watersheds=w[,c('outflowlocationid','geometry')]
+    st_write(watersheds,conn(),append = T)
+  }
+  
+}
 
 
 

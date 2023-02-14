@@ -1,6 +1,24 @@
 source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
 library(rgl)
 
+##################3write silver creek stream point data to db-----------------
+#dbSendQuery(conn(),"TRUNCATE TABLE scstreampoints RESTART IDENTITY;")
+scPoints=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/scStreamPoints.gpkg")
+st_geometry(scPoints) = "geometry"
+st_write(scPoints[,c("uaa","geometry")],conn(),layer="scstreampoints")
+
+#################query stream points in watershed of location
+dbGetQuery(conn(),"SELECT * FROM scstreampoints WHERE ST_WITHIN(scstreampoints.geometry,(SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid='55'));")
+
+
+
+
+
+
+
+
+
+
 
 dbGetQuery(conn(),"SELECT * FROM data LIMIT 10;")
 

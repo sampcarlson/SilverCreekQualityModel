@@ -2,6 +2,9 @@ library(rgrass)
 library(terra)
 library(sf)
 
+#dbSendQuery(conn(),"TRUNCATE TABLE watersheds RESTART IDENTITY;")
+
+
 InitGrass_byRaster(baseRaster=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeFlowDir_scCarve.tif"),grassRasterName = "flowDir")
 
 #execGRASS("g.list",parameters=list(type="rast"))
@@ -12,7 +15,7 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
     stop("function requires sf point object")
   }
   
-  if(!(pointLocation$locationid %in% dbGetQuery(conn(),"SELECT outflowlocationid FROM watersheds;"))){
+  if(!(pointLocation$locationid %in% dbGetQuery(conn(),"SELECT outflowlocationid FROM watersheds;")$outflowlocationid)){
     
     addRasterIfAbsent(flowDir,"flowDir")
     
