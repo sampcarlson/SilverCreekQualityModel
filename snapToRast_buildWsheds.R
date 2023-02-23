@@ -35,7 +35,13 @@ InitGrass_byRaster(baseRaster=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/Sta
 #execGRASS("g.list",parameters=list(type="rast"))
 #pointLocation=st_read(conn(),query="SELECT * FROM LOCATIONS LIMIT 1;")
 
-allLocations=split(allLocations,allLocations$locationid)
+#test case for erronious tiny watershed
+#allLocations=allLocations[allLocations$locationid==55,]
 
-sapply(allLocations,calcWshed)
+#allLocations=allLocations[allLocations$locationid==137,]
+
+allLocationsList=split(allLocations,allLocations$locationid)
+
+wshedsInfo=sapply(allLocationsList,calcWshed)
+
 

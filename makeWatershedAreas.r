@@ -50,5 +50,5 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
 allLocations=st_read(conn(),query="SELECT * FROM LOCATIONS;")
 allLocations=split(allLocations,allLocations$locationid)
 
-sapply(allLocations,calcWshed)
+wshedDetails=sapply(allLocations,calcWshed)
 

@@ -212,7 +212,7 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
     #maxCoords=as.matrixmaxCoords)
     #print(maxCoords)
     thisPoint=st_point(maxCoords)
-
+    
     thisPoint=st_sfc(thisPoint,crs=st_crs(uaaRast))
     thisPoint=st_transform(thisPoint,crs=st_crs(location))
     maxCoords=thisPoint
@@ -240,7 +240,7 @@ InitGrass_byRaster=function(baseRaster,grassRasterName,grassPath){
   unlink_.gislock()
   remove_GISRC()
   
-
+  
   
   #initialize grass.  SG does not do what I want it to do
   initGRASS(override=TRUE,mapset="PERMANENT",remove_GISRC = T, SG=baseRaster)
@@ -274,6 +274,8 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
     
     addRasterIfAbsent(flowDir,"flowDir")
     
+    pointLocation=pointLocation[1,]
+    
     print(paste("Determining watershed for point",pointLocation$name,"with geometry",paste(st_coordinates(pointLocation),collapse=", ")))
     
     #vectors must be SpatVector to be written to grass
@@ -284,22 +286,46 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
       stop("point crs does not match raster crs")
     }
     
-    execGRASS("r.water.outlet",flags="overwrite", parameters=list(input="flowDir",output="thisWatershedRast",coordinates=c(st_coordinates(pointLocation)[1,"X"],st_coordinates(pointLocation)[1,"Y"])))
-    execGRASS("r.to.vect",flags=c("s","overwrite"),parameters=list(input="thisWatershedRast",output="thisWatershedVect",type="area"))
+    execGRASS("r.water.outlet",flags=c("overwrite","quiet"), parameters=list(input="flowDir",output="thisWatershedRast",coordinates=c(st_coordinates(pointLocation)[1,"X"],st_coordinates(pointLocation)[1,"Y"])))
+    execGRASS("r.to.vect",flags=c("s","overwrite","quiet"),parameters=list(input="thisWatershedRast",output="thisWatershedVect",type="area"))
     
     w=st_as_sf(read_VECT("thisWatershedVect"))
+    w$area=st_area(w$geometry)
     if(nrow(w)>1){
-      w$area=st_area(w)
-      w=w[order(w$area,decreasing = T)]
+      w=w[order(w$area,decreasing = T),]
       w=w[1,]
     }
     
     
+    print(st_area(w$geometry))
+    if( as.numeric(st_area(w))<1000*res(flowDir)[1]*res(flowDir)[2] ) { #tiny watershed, try again
+      
+      uaaRast=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/WholeUAA_ScCarve.tif")
+      thisUAA=extract(uaaRast,vect(pointLocation))[1,2]
+      newCoords=getNearestStream_rast(location=pointLocation,uaaRast=uaaRast,maxDistance=res(flowDir)[1]*10,uaaThreshold=thisUAA+10)
+      
+      
+      execGRASS("r.water.outlet",flags=c("overwrite","quiet"), parameters=list(input="flowDir",output="thisWatershedRast",coordinates=c(st_coordinates(newCoords)[1,"X"],st_coordinates(newCoords)[1,"Y"])))
+      execGRASS("r.to.vect",flags=c("s","overwrite","quiet"),parameters=list(input="thisWatershedRast",output="thisWatershedVect",type="area"))
+      
+      w=st_as_sf(read_VECT("thisWatershedVect"))
+      w$area=st_area(w$geometry)
+      if(nrow(w)>1){
+        w=w[order(w$area,decreasing = T),]
+        w=w[1,]
+      } 
+      print(st_area(w$geometry))
+      
+      
+      
+      
+    }
+    
     w$outflowlocationid=pointLocation$locationid
     watersheds=w[,c('outflowlocationid','geometry')]
     st_write(watersheds,conn(),append = T)
+    #return(w)
   }
-  
 }
 
 
