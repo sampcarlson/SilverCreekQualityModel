@@ -75,3 +75,13 @@ st_read(conn(),query=paste0("SELECT * FROM scstreampoints
 
 
 
+#flow points above sportsmans with some location information added
+allFlowData=st_read(conn(),query="SELECT data.locationid, locations.name, data.value AS flow, data.datetime, locations.geometry 
+                              FROM locations LEFT JOIN data ON locations.locationid = data.locationid
+                              WHERE data.metric = 'flow' 
+                              AND ST_WITHIN(locations.geometry,(SELECT geometry FROM watersheds WHERE outflowlocationid = '1'));")
+
+#this could be done in a single sql statement I am sure, but...
+allFlowData=merge(allFlowData,dbGetQuery(conn(),"SELECT DISTINCT ON (locationid) locationid, value AS uaa FROM locationinfo WHERE metric='uaa';"))
+
+

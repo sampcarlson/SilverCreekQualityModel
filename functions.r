@@ -140,23 +140,31 @@ getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL
 }
 
 
-flowWtMeanRes=function(flows,resValues){
+calcMeanResByLocation=function(locationID,residenceColName=NULL,summary=T){
+  wholeStream=dbGetQuery(conn(),paste0("SELECT * FROM scstreampoints WHERE 
+                                       ST_WITHIN(scstreampoints.geometry,
+                                       (SELECT geometry FROM watersheds WHERE outflowlocationid = '",locationID,"'));"))
+  if(!is.null(residenceColName)){
+    wholeStream$residence=wholeStream[,residenceColName]
+  } else {
+    wholeStream$residence=1
+  }
+  
+  wholeStream$flow=wholeStream$uaa
+  
   #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
   #note that max(Qs) is just outflow Q
-  if (length(flows)!=length(resValues)){
-    print("differing number of flow and residence values")
-    return(NULL)
-  } else {
-    meanRes=0
-    for(i in 1:length(flows)){
-      meanRes=meanRes+resValues[i]*flows[i]/max(flows)
-    }
-    return(meanRes)
+  maxFlow=max(wholeStream$flow)
+  meanRes=0
+  for(i in 1:nrow(wholeStream)){
+    meanRes=meanRes+wholeStream$residence[i]*wholeStream$flow[i]/maxFlow
   }
+  return(meanRes)
 }
 
 snapPointsToLines=function(points_to_snap,target_lines,maxSnapDistance=100){
   #First define points along lines to snap to...
+  #force(target_lines)
   snapPoints=st_line_sample(st_cast(st_zm(target_lines),"LINESTRING"),density=1)#'density' snap points per meter
   
   #snap array pts to pts along network lines:
@@ -265,7 +273,7 @@ InitGrass_byRaster=function(baseRaster,grassRasterName,grassPath){
   stringexecGRASS("g.proj -p")
 }
 
-calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeFlowDir_scCarve.tif")){
+calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeFlowDir_scCarve.tif"),streamVect=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/SilverCreekNet_revised.gpkg")){
   if(!("sf" %in% class(pointLocation))){
     stop("function requires sf point object")
   }
@@ -300,10 +308,13 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
     print(st_area(w$geometry))
     if( as.numeric(st_area(w))<1000*res(flowDir)[1]*res(flowDir)[2] ) { #tiny watershed, try again
       
-      uaaRast=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/WholeUAA_ScCarve.tif")
-      thisUAA=extract(uaaRast,vect(pointLocation))[1,2]
-      newCoords=getNearestStream_rast(location=pointLocation,uaaRast=uaaRast,maxDistance=res(flowDir)[1]*10,uaaThreshold=thisUAA+10)
-      
+      if(!is.null(streamVect)){  #snap to stream vector
+        newCoords=snapPointsToLines(pointLocation,streamVect,maxSnapDistance = 100)
+      } else {
+        uaaRast=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/WholeUAA_ScCarve.tif")
+        thisUAA=extract(uaaRast,vect(pointLocation))[1,2]
+        newCoords=getNearestStream_rast(location=pointLocation,uaaRast=uaaRast,maxDistance=res(flowDir)[1]*10,uaaThreshold=thisUAA+1000)
+      }
       
       execGRASS("r.water.outlet",flags=c("overwrite","quiet"), parameters=list(input="flowDir",output="thisWatershedRast",coordinates=c(st_coordinates(newCoords)[1,"X"],st_coordinates(newCoords)[1,"Y"])))
       execGRASS("r.to.vect",flags=c("s","overwrite","quiet"),parameters=list(input="thisWatershedRast",output="thisWatershedVect",type="area"))

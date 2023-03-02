@@ -45,3 +45,5 @@ allLocationsList=split(allLocations,allLocations$locationid)
 wshedsInfo=sapply(allLocationsList,calcWshed)
 
 
+#dbSendQuery(conn(),"DELETE FROM watersheds WHERE outflowlocationid = 60;")
+
