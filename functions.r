@@ -201,18 +201,19 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
   distance=distanceIncriment*1
   maxCoords=NULL
   while(done==F){
-    areaInfo=getStr_worker(location,uaaRast,distance)
-    #print(paste("distance:",distance))
-    #print(paste("Max UAA:",round(max(areaInfo$uaa))))
-    if(max(areaInfo$uaa)>uaaThreshold){ #found a pixel w/ sufficient uaa
-      maxCell=areaInfo[which.max(areaInfo$uaa),]$cell
-      maxCoords=xyFromCell(uaa,maxCell)
-      done=T
-    }
     if(distance >= maxDistance){
       done=T
+    } else {
+      areaInfo=getStr_worker(location,uaaRast,distance)
+      #print(paste("distance:",distance))
+      #print(paste("Max UAA:",round(max(areaInfo$uaa))))
+      if(max(areaInfo$uaa)>uaaThreshold){ #found a pixel w/ sufficient uaa
+        maxCell=areaInfo[which.max(areaInfo$uaa),]$cell
+        maxCoords=xyFromCell(uaa,maxCell)
+        done=T
+      }
+      distance = distance + distanceIncriment
     }
-    distance = distance + distanceIncriment
   }
   #create point geometry, transform from raster crs to location CRS
   if(!is.null(maxCoords)){
@@ -224,6 +225,10 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
     thisPoint=st_sfc(thisPoint,crs=st_crs(uaaRast))
     thisPoint=st_transform(thisPoint,crs=st_crs(location))
     maxCoords=thisPoint
+  } else {
+    maxCoords=location
+    print(location)
+    print("   ^ not snapped, nothing within range")
   }
   return(maxCoords)
 }
@@ -273,7 +278,7 @@ InitGrass_byRaster=function(baseRaster,grassRasterName,grassPath){
   stringexecGRASS("g.proj -p")
 }
 
-calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeFlowDir_scCarve.tif"),streamVect=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/SilverCreekNet_revised.gpkg")){
+calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/flowDir_carve_sink.tif"),streamVect=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/scNet.gpkg"),snapToVect=F){
   if(!("sf" %in% class(pointLocation))){
     stop("function requires sf point object")
   }
@@ -308,12 +313,12 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
     print(st_area(w$geometry))
     if( as.numeric(st_area(w))<1000*res(flowDir)[1]*res(flowDir)[2] ) { #tiny watershed, try again
       
-      if(!is.null(streamVect)){  #snap to stream vector
+      if(snapToVect){
         newCoords=snapPointsToLines(pointLocation,streamVect,maxSnapDistance = 100)
       } else {
-        uaaRast=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/WholeUAA_ScCarve.tif")
+        uaaRast=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/uaa_km_sink.tif")
         thisUAA=extract(uaaRast,vect(pointLocation))[1,2]
-        newCoords=getNearestStream_rast(location=pointLocation,uaaRast=uaaRast,maxDistance=res(flowDir)[1]*10,uaaThreshold=thisUAA+1000)
+        newCoords=getNearestStream_rast(location=pointLocation,uaaRast=uaaRast,maxDistance=100,uaaThreshold=thisUAA+.2)
       }
       
       execGRASS("r.water.outlet",flags=c("overwrite","quiet"), parameters=list(input="flowDir",output="thisWatershedRast",coordinates=c(st_coordinates(newCoords)[1,"X"],st_coordinates(newCoords)[1,"Y"])))
