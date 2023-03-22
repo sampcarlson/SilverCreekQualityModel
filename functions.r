@@ -3,6 +3,7 @@ library(RColorBrewer)
 library(rgrass)
 library(sf)
 library(terra)
+library(parallel)
 
 getColor=function(reps){
   allColors=brewer.pal(12,"Set3")
@@ -345,4 +346,58 @@ calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreek
 }
 
 
+getFlowIndexData=function(flowIndexLocationID=144,upstreamOfLocationID=147){
+  
+  #flowIndexDates=dbGetQuery(conn(),paste0("SELECT DISTINCT datetime, metric FROM data WHERE data.locationid = '",flowIndexLocationID,"' ORDER BY datetime;"))
+  withinString=" "
+  if(!is.null(upstreamOfLocationID)){
+    withinString=paste0(" AND ST_WITHIN(locations.geometry,(SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid='",upstreamOfLocationID,"')) ")
+  }
+  allFlowData=dbGetQuery(conn(),paste0("SELECT data.locationid, locations.name, data.value AS flow, data.datetime
+                                FROM locations LEFT JOIN data ON locations.locationid = data.locationid
+                                WHERE data.metric = 'flow'
+                                AND data.datetime IN (",paste0("SELECT DISTINCT datetime FROM data WHERE data.locationid = '",flowIndexLocationID,"' AND data.metric = 'flow')"),
+                                          withinString,
+                                          ";"))
+  
+  #this should be combined with the above sql satatement but...
+  allFlowData=merge(allFlowData,dbGetQuery(conn(),"SELECT DISTINCT ON (locationid) locationid, wshedareakm AS uaa FROM locationattributes;"))
+  allFlowData$date=as.Date(allFlowData$datetime)
+  
+  
+  calcDayIndex=function(date,flowDF,flowIndexLocationID){
+    today=flowDF[flowDF$date==date,]
+    today=aggregate(flow~locationid+date+name+uaa,data=today,FUN=median,na.rm=T)
+    
+    today$indexFlow=median(today$flow[today$locationid==flowIndexLocationID],na.rm=T)
+    today$flowIndex=today$flow/today$indexFlow
+    return(today)
+  }
+  
+  indexDates=unique(allFlowData$date[allFlowData$locationid==flowIndexLocationID])
+  indexDates=indexDates[order(indexDates)]
+  
+  cores=max(1,parallel::detectCores()-2)
+  clust=makeCluster(cores)
+  
+  system.time({
+  r= parLapply(cl=clust,indexDates,calcDayIndex,flowDF=allFlowData,flowIndexLocationID=flowIndexLocationID)
+  indexedFlowData=do.call(rbind,r)
+  })
+  
+  stopCluster(clust)
+  
+  return(indexedFlowData)
+}
 
+
+
+getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
+  startDate=as.Date(startDate)
+  if(is.null(endDate)){
+    endDate=startDate
+  }
+  endDate=as.Date(endDate)
+  flowData=flowData[flowData$date>=startDate & flowData$date <=endDate,]
+  return(flowData)
+}
