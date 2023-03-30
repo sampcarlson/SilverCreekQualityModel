@@ -5,16 +5,90 @@ flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
 allFlowData=getFlowIndexData()
 
+siteDayCount=aggregate(date~locationid, allFlowData,FUN=length)
+names(siteDayCount)[2]="obsDays"
 
-flow=getFlowByDate(startDate="2021-07-1",endDate="2021-10-1")
+
+flow=getFlowByDate(startDate="2000-07-1",endDate="2023-10-1")
+#flow=getFlowByDate(startDate="2021-07-1",endDate="2021-10-1")
 
 plot(flow$flowIndex~flow$indexFlow)
 plot(flow$flowIndex~flow$uaa)
 
 
-m=lm(flowIndex~poly(uaa,2)*indexFlow,data=flow)
-summary(m)
+flowModel=lm(flowIndex~poly(uaa,2)+indexFlow,data=flow)
+summary(flowModel)
 
-lines(predict(m)[order(flow$uaa)]~flow$uaa[order(flow$uaa)])
+lines(predict(flowModel)[order(flow$uaa)]~flow$uaa[order(flow$uaa)])
 
 
+sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,resid=T,minN=5,highlightLocationID=157){
+  sampleStartDate=as.Date(sampleStartDate)
+  if(is.null(sampleEndDate)){
+    sampleEndDate=sampleStartDate+2     # need enough data to fit all model terms
+  }
+  sampleEndDate=as.Date(sampleEndDate)
+  sampleFlow=getFlowByDate(sampleStartDate,sampleEndDate)
+  if(nrow(sampleFlow)>minN){
+    m=lm(flowIndex~poly(uaa,2)+indexFlow,data=sampleFlow)
+    print(summary(m))
+    plot(sampleFlow$flowIndex~sampleFlow$uaa,main=paste("flow model for",sampleStartDate,"to",sampleEndDate))
+    if(highlightLocationID %in% sampleFlow$locationid){
+      points(sampleFlow$flowIndex[sampleFlow$locationid==highlightLocationID]~sampleFlow$uaa[sampleFlow$locationid==highlightLocationID],pch="*",cex=3)
+    }
+    varDF=data.frame(uaa=0:120,indexFlow=sampleFlow$indexFlow[1])
+    
+    lines(predict(m,varDF)~varDF$uaa,lty=2)
+    if(!is.null(compareModel)){
+      lines(predict(compareModel,varDF)~varDF$uaa) 
+      legend(x="topleft",legend=c("model fitted to this data","general model"),lty=c(2,1))
+    }
+    if(resid){
+      resids=sampleFlow
+      resids$pred=predict(compareModel,sampleFlow)
+      resids$error=resids$pred-resids$flowIndex
+      resids$pctError=100*abs(resids$error)/(resids$flowIndex+0.01)
+      resids$errorPtSize=1+((1+resids$pctError)^(1/4))
+      return(resids)
+    }
+    else(
+      return(m)
+    )
+  }
+}
+
+
+sampleModel("2021-9-15")
+
+
+modelPerformance=do.call(rbind,lapply(seq.Date(from=as.Date("2000-01-01"),to=as.Date("2022-11-01"),by="week"),FUN=sampleModel))
+head(modelPerformance)
+
+plot(modelPerformance$error~modelPerformance$locationid)
+plot(modelPerformance$pctError~modelPerformance$locationid)
+
+
+modelPerfSummary=aggregate(cbind(errorPtSize,flowIndex,pred,error,pctError)~locationid, data=modelPerformance, FUN=mean)
+
+###make spatial points layer
+modelLocations=st_read(conn(),query=paste0("SELECT * FROM locationattributes WHERE locationid IN ('",
+                                           paste(unique(modelPerformance$locationid),collapse="', '"),
+                                           "');"))
+#somehow looses watershed geometry in merge, but keeps point geom
+modelLocations=merge(modelLocations,modelPerfSummary,by="locationid")
+modelLocations=merge(modelLocations,siteDayCount,by="locationid")
+st_write(modelLocations,dsn="~/Dropbox/SilverCreek/SilverCreekSpatial/modelPerformance.gpkg",delete_dsn=T)
+#odd dataset:
+
+mp=sampleModel("2021-07-12")
+
+
+######## summary info for flow meeting w/ tnc
+flowDates=flow[,c("locationid","date")]
+head(flowDates)
+plot(flowDates$locationid~flowDates$date,xlim=c(as.Date("2010-01-01"),as.Date("2022-12-24")),xlab = "Date",ylab="location ID")
+
+flowLocations=modelLocations[,c("locationid","name","wshedareakm","flowIndex","obsDays")]
+
+flowLocations$watershed_area_km2=round(flowLocations$wshedareakm,2)
+flowLocations$average_percent_of_sportsmans_flow=100*round(flowLocations$flowIndex,2)
