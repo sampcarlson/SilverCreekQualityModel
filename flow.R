@@ -3,7 +3,9 @@ source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
 dbGetQuery(conn(),"SELECT * FROM locations WHERE locations.name ILIKE '%sportsman%';")
 flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
-allFlowData=getFlowIndexData()
+#upstream locations:  144 is sportsmans, 147 is ragsdale (station 10?) just above sc-lw confluence 
+
+allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 147)
 
 siteDayCount=aggregate(date~locationid, allFlowData,FUN=length)
 names(siteDayCount)[2]="obsDays"
@@ -12,31 +14,41 @@ names(siteDayCount)[2]="obsDays"
 flow=getFlowByDate(startDate="2000-07-1",endDate="2023-10-1")
 #flow=getFlowByDate(startDate="2021-07-1",endDate="2021-10-1")
 
+inSeason=function(date){
+  month=as.numeric(format.Date(date,"%m"))
+  return(month>=6 & month <=9)
+}
+
+flow=flow[inSeason(flow$date),]
+
+
 plot(flow$flowIndex~flow$indexFlow)
 plot(flow$flowIndex~flow$uaa)
 
 
-flowModel=lm(flowIndex~poly(uaa,2)+indexFlow,data=flow)
+flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=flow)
 summary(flowModel)
+
+saveRDS(flowModel,file="~/Dropbox/SilverCreek/flowModel.rds")
 
 lines(predict(flowModel)[order(flow$uaa)]~flow$uaa[order(flow$uaa)])
 
 
-sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,resid=T,minN=5,highlightLocationID=157){
+sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,resid=T,minN=20,highlightLocationID=147){
   sampleStartDate=as.Date(sampleStartDate)
   if(is.null(sampleEndDate)){
-    sampleEndDate=sampleStartDate+2     # need enough data to fit all model terms
+    sampleEndDate=sampleStartDate+7     # fit 1 week at a time
   }
   sampleEndDate=as.Date(sampleEndDate)
   sampleFlow=getFlowByDate(sampleStartDate,sampleEndDate)
   if(nrow(sampleFlow)>minN){
-    m=lm(flowIndex~poly(uaa,2)+indexFlow,data=sampleFlow)
+    m=lm(flowIndex~poly(uaa,2)*indexFlow,data=sampleFlow)
     print(summary(m))
-    plot(sampleFlow$flowIndex~sampleFlow$uaa,main=paste("flow model for",sampleStartDate,"to",sampleEndDate))
+    plot(sampleFlow$flowIndex~sampleFlow$uaa,main=paste("flow model for",sampleStartDate,"to",sampleEndDate,", indexFlow=",round(mean(sampleFlow$indexFlow))))
     if(highlightLocationID %in% sampleFlow$locationid){
       points(sampleFlow$flowIndex[sampleFlow$locationid==highlightLocationID]~sampleFlow$uaa[sampleFlow$locationid==highlightLocationID],pch="*",cex=3)
     }
-    varDF=data.frame(uaa=0:120,indexFlow=sampleFlow$indexFlow[1])
+    varDF=data.frame(uaa=0:210,indexFlow=sampleFlow$indexFlow[1])
     
     lines(predict(m,varDF)~varDF$uaa,lty=2)
     if(!is.null(compareModel)){
@@ -60,8 +72,10 @@ sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,r
 
 sampleModel("2021-9-15")
 
+sampleDates=seq.Date(from=as.Date("2000-01-01"),to=as.Date("2022-11-01"),by="week")
+sampleDates=sampleDates[inSeason(sampleDates)]
 
-modelPerformance=do.call(rbind,lapply(seq.Date(from=as.Date("2000-01-01"),to=as.Date("2022-11-01"),by="week"),FUN=sampleModel))
+modelPerformance=do.call(rbind,lapply(sampleDates,FUN=sampleModel))
 head(modelPerformance)
 
 plot(modelPerformance$error~modelPerformance$locationid)

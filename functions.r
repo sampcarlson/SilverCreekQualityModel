@@ -353,12 +353,14 @@ getFlowIndexData=function(flowIndexLocationID=144,upstreamOfLocationID=147){
   if(!is.null(upstreamOfLocationID)){
     withinString=paste0(" AND ST_WITHIN(locations.geometry,(SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid='",upstreamOfLocationID,"')) ")
   }
+  
+  
   allFlowData=dbGetQuery(conn(),paste0("SELECT data.locationid, locations.name, data.value AS flow, data.datetime
                                 FROM locations LEFT JOIN data ON locations.locationid = data.locationid
                                 WHERE data.metric = 'flow'
                                 AND data.datetime IN (",paste0("SELECT DISTINCT datetime FROM data WHERE data.locationid = '",flowIndexLocationID,"' AND data.metric = 'flow')"),
-                                          withinString,
-                                          ";"))
+                                withinString,
+                                " OR locations.locationid = '",upstreamOfLocationID,"';"))
   
   #this should be combined with the above sql satatement but...
   allFlowData=merge(allFlowData,dbGetQuery(conn(),"SELECT DISTINCT ON (locationid) locationid, wshedareakm AS uaa FROM locationattributes;"))
