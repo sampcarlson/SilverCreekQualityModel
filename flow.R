@@ -7,6 +7,10 @@ flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
 allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 147)
 
+#n per day:
+dayN=aggregate(locationid~date, data=allFlowData, FUN=length)
+sum(dayN$locationid>=8)
+
 siteDayCount=aggregate(date~locationid, allFlowData,FUN=length)
 names(siteDayCount)[2]="obsDays"
 
@@ -21,7 +25,6 @@ inSeason=function(date){
 
 flow=flow[inSeason(flow$date),]
 
-
 plot(flow$flowIndex~flow$indexFlow)
 plot(flow$flowIndex~flow$uaa)
 
@@ -29,12 +32,28 @@ plot(flow$flowIndex~flow$uaa)
 flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=flow)
 summary(flowModel)
 
+# model fit limited to best data days:
+bestDataDays=dayN$date[dayN$locationid>=10]
+rich_flow=flow[flow$date %in% bestDataDays,]
+rich_flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=rich_flow)
+summary(rich_flowModel)
+
+plot(flow$flowIndex[flow$date %in% bestDataDays]~flow$uaa[flow$date %in% bestDataDays])
+lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=100))~c(0:250))
+lines(predict(rich_flowModel,data.frame(uaa=0:250,indexFlow=100))~c(0:250),lty=2)
+
+
+
 saveRDS(flowModel,file="~/Dropbox/SilverCreek/flowModel.rds")
 
-lines(predict(flowModel)[order(flow$uaa)]~flow$uaa[order(flow$uaa)])
 
 
-sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,resid=T,minN=20,highlightLocationID=147){
+plot(allocateFlow(indexFlow=100)[,"flow"])
+
+
+#examine model performance:
+
+sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,resid=T,minN=20,highlightLocationID=0){
   sampleStartDate=as.Date(sampleStartDate)
   if(is.null(sampleEndDate)){
     sampleEndDate=sampleStartDate+7     # fit 1 week at a time
@@ -48,7 +67,7 @@ sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,r
     if(highlightLocationID %in% sampleFlow$locationid){
       points(sampleFlow$flowIndex[sampleFlow$locationid==highlightLocationID]~sampleFlow$uaa[sampleFlow$locationid==highlightLocationID],pch="*",cex=3)
     }
-    varDF=data.frame(uaa=0:210,indexFlow=sampleFlow$indexFlow[1])
+    varDF=data.frame(uaa=0:250,indexFlow=sampleFlow$indexFlow[1])
     
     lines(predict(m,varDF)~varDF$uaa,lty=2)
     if(!is.null(compareModel)){
@@ -68,6 +87,13 @@ sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,r
     )
   }
 }
+
+
+#plot whole season, examine effect of indexFlow
+sampleModel("2021-06-01","2021-09-30")
+lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=50))~c(0:250),col="red")
+lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=100))~c(0:250),col="orange")
+lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=200))~c(0:250),col="blue")
 
 
 sampleModel("2021-9-15")
@@ -97,12 +123,18 @@ st_write(modelLocations,dsn="~/Dropbox/SilverCreek/SilverCreekSpatial/modelPerfo
 mp=sampleModel("2021-07-12")
 
 
+
+
+
 ######## summary info for flow meeting w/ tnc
-flowDates=flow[,c("locationid","date")]
+flowDates=allFlowData[,c("locationid","date")]
 head(flowDates)
-plot(flowDates$locationid~flowDates$date,xlim=c(as.Date("2010-01-01"),as.Date("2022-12-24")),xlab = "Date",ylab="location ID")
+plot(flowDates$locationid~flowDates$date,xlim=c(as.Date("2014-01-01"),as.Date("2022-12-24")),xlab = "Date",ylab="location ID")
 
 flowLocations=modelLocations[,c("locationid","name","wshedareakm","flowIndex","obsDays")]
 
 flowLocations$watershed_area_km2=round(flowLocations$wshedareakm,2)
 flowLocations$average_percent_of_sportsmans_flow=100*round(flowLocations$flowIndex,2)
+
+
+

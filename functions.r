@@ -5,13 +5,6 @@ library(sf)
 library(terra)
 library(parallel)
 
-getColor=function(reps){
-  allColors=brewer.pal(12,"Set3")
-  reps=reps %% length(allColors)
-  return(allColors[reps])
-  
-}
-
 conn=function(){    #checks for db connection object ('scdb') in global env, creates if necessary, returns and places in global enc
   
   scdbConnect=function(){
@@ -38,6 +31,14 @@ conn=function(){    #checks for db connection object ('scdb') in global env, cre
 }
 
 
+getColor=function(reps){
+  allColors=brewer.pal(12,"Set3")
+  reps=reps %% length(allColors)
+  return(allColors[reps])
+  
+}
+
+
 listDataSeries=function(){
   #allSeries=dbGetQuery(conn(),"SELECT DISTINCT locationid, metricid FROM data;")
   allSeries=dbGetQuery(conn(),"SELECT DISTINCT metricid, locationid, MIN(datetime) ,MAX(datetime), COUNT(datetime) FROM data GROUP BY metricid, locationid;")
@@ -49,6 +50,7 @@ listDataSeries=function(){
   names(allSeries)[7]="enddate"
   return(allSeries)
 }  
+
 
 getSeriesData=function(seriesids,dataSeriesList=dataSeries){
   thisSeries=dataSeriesList[dataSeriesList$seriesid %in% seriesids,]
@@ -141,28 +143,6 @@ getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL
 }
 
 
-calcMeanResByLocation=function(locationID,residenceColName=NULL,summary=T){
-  wholeStream=dbGetQuery(conn(),paste0("SELECT * FROM scstreampoints WHERE 
-                                       ST_WITHIN(scstreampoints.geometry,
-                                       (SELECT geometry FROM watersheds WHERE outflowlocationid = '",locationID,"'));"))
-  if(!is.null(residenceColName)){
-    wholeStream$residence=wholeStream[,residenceColName]
-  } else {
-    wholeStream$residence=1
-  }
-  
-  wholeStream$flow=wholeStream$uaa
-  
-  #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
-  #note that max(Qs) is just outflow Q
-  maxFlow=max(wholeStream$flow)
-  meanRes=0
-  for(i in 1:nrow(wholeStream)){
-    meanRes=meanRes+wholeStream$residence[i]*wholeStream$flow[i]/maxFlow
-  }
-  return(meanRes)
-}
-
 snapPointsToLines=function(points_to_snap,target_lines,maxSnapDistance=100){
   #First define points along lines to snap to...
   #force(target_lines)
@@ -235,10 +215,10 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
 }
 
 
-
 grassTableToDF=function(grassDF){
   return (read.table(text=grassDF,header=T,sep="|",stringsAsFactors = F))
 }
+
 
 addRasterIfAbsent=function(addRaster,grassRasterName){
   if(!grassRasterName %in% stringexecGRASS("g.list type=raster",intern = T)) {
@@ -278,6 +258,7 @@ InitGrass_byRaster=function(baseRaster,grassRasterName,grassPath){
   stringexecGRASS("g.gisenv")
   stringexecGRASS("g.proj -p")
 }
+
 
 calcWshed=function(pointLocation,flowDir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/flowDir_carve_sink.tif"),streamVect=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/scNet.gpkg"),snapToVect=F){
   if(!("sf" %in% class(pointLocation))){
@@ -359,8 +340,8 @@ getFlowIndexData=function(flowIndexLocationID=144,upstreamOfLocationID=147){
                                 FROM locations LEFT JOIN data ON locations.locationid = data.locationid
                                 WHERE data.metric = 'flow'
                                 AND data.datetime IN (",paste0("SELECT DISTINCT datetime FROM data WHERE data.locationid = '",flowIndexLocationID,"' AND data.metric = 'flow')"),
-                                withinString,
-                                " OR locations.locationid = '",upstreamOfLocationID,"';"))
+                                       withinString,
+                                       " OR locations.locationid = '",upstreamOfLocationID,"';"))
   
   #this should be combined with the above sql satatement but...
   allFlowData=merge(allFlowData,dbGetQuery(conn(),"SELECT DISTINCT ON (locationid) locationid, wshedareakm AS uaa FROM locationattributes;"))
@@ -383,15 +364,14 @@ getFlowIndexData=function(flowIndexLocationID=144,upstreamOfLocationID=147){
   clust=makeCluster(cores)
   
   system.time({
-  r= parLapply(cl=clust,indexDates,calcDayIndex,flowDF=allFlowData,flowIndexLocationID=flowIndexLocationID)
-  indexedFlowData=do.call(rbind,r)
+    r= parLapply(cl=clust,indexDates,calcDayIndex,flowDF=allFlowData,flowIndexLocationID=flowIndexLocationID)
+    indexedFlowData=do.call(rbind,r)
   })
   
   stopCluster(clust)
   
   return(indexedFlowData)
 }
-
 
 
 getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
@@ -403,3 +383,51 @@ getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
   flowData=flowData[flowData$date>=startDate & flowData$date <=endDate,]
   return(flowData)
 }
+
+
+allocateFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")){
+  if(length(indexFlow)!=1){
+    stop("indexFlow must be single value")
+  }
+  
+  streamPoints=st_read(conn(),query=paste0("SELECT * from streampoints WHERE st_within(streampoints.geometry,
+                                              (SELECT geometry FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"')
+                                           );"))
+    streamPoints$indexFlow=indexFlow
+  streamPoints$flowIndex=predict(flowModel,streamPoints)
+  streamPoints$flow=streamPoints$indexFlow*streamPoints$flowIndex
+
+  #map plot
+  #plot(streamPoints[,"flow"])
+  
+  #flow vs uaa plot
+  plot(streamPoints$flow~streamPoints$uaa)
+  
+  return(streamPoints)
+}
+
+
+calcMeanResidence=function(indexFlow=100,outflowLocationID=147,residenceColName=NULL){
+  flowPoints=allocateFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
+  
+  
+  if(!is.null(residenceColName)){
+    flowPoints$residence=flowPoints[,residenceColName]
+  } else {
+    print("using 'steam point' as unit of residence")
+    flowPoints$residence=1
+  }
+  
+  
+  
+  #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
+  #note that max(Qs) is just outflow Q
+  maxFlow=max(flowPoints$flow)
+  #print(maxFlow)
+  meanRes=0
+  for(i in 1:nrow(flowPoints)){
+    meanRes=meanRes+flowPoints$residence[i]*flowPoints$flow[i]/maxFlow
+  }
+  return(meanRes)
+}
+
