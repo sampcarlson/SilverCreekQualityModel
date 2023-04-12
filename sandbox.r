@@ -20,5 +20,3 @@ makePlot(seriesData)
 
 
 
-
-

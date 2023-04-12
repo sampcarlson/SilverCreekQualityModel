@@ -48,7 +48,7 @@ saveRDS(flowModel,file="~/Dropbox/SilverCreek/flowModel.rds")
 
 
 
-plot(allocateFlow(indexFlow=100)[,"flow"])
+plot(distributeFlow(indexFlow=100)[,"flow"])
 
 
 #examine model performance:

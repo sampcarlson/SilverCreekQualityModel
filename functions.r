@@ -385,7 +385,7 @@ getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
 }
 
 
-allocateFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")){
+distributeFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")){
   if(length(indexFlow)!=1){
     stop("indexFlow must be single value")
   }
@@ -393,26 +393,32 @@ allocateFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dropb
   streamPoints=st_read(conn(),query=paste0("SELECT * from streampoints WHERE st_within(streampoints.geometry,
                                               (SELECT geometry FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"')
                                            );"))
-    streamPoints$indexFlow=indexFlow
+  streamPoints$indexFlow=indexFlow
   streamPoints$flowIndex=predict(flowModel,streamPoints)
   streamPoints$flow=streamPoints$indexFlow*streamPoints$flowIndex
-
+  
   #map plot
   #plot(streamPoints[,"flow"])
   
   #flow vs uaa plot
-  plot(streamPoints$flow~streamPoints$uaa)
+  #plot(streamPoints$flow~streamPoints$uaa)
   
   return(streamPoints)
 }
 
 
-calcMeanResidence=function(indexFlow=100,outflowLocationID=147,residenceColName=NULL){
-  flowPoints=allocateFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
+calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunction=F,meanIndexFlow=140,length=9.42){
+  flowPoints=distributeFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
   
-  
-  if(!is.null(residenceColName)){
-    flowPoints$residence=flowPoints[,residenceColName]
+  if(useResidenceFunction){
+    
+    
+    meanFlowPoints=distributeFlow(indexFlow = meanIndexFlow,outflowLocationID = outflowLocationID)[,c("uaa","geometry","flow")]
+    names(meanFlowPoints)[3]="meanFlow"
+    flowPoints=st_join(flowPoints,meanFlowPoints)
+    
+    flowPoints$velocityIndex=flowPoints$meanFlow + ( 0.34 / (flowPoints$flow-flowPoints$meanFlow)^.66 )
+    
   } else {
     print("using 'steam point' as unit of residence")
     flowPoints$residence=1
