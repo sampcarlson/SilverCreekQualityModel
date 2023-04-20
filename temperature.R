@@ -1,4 +1,6 @@
 source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
+library(pbapply)
+
 flowModel=readRDS(file="~/Dropbox/SilverCreek/flowModel.rds")
 
 dbGetQuery(conn(),"SELECT * FROM locations WHERE locations.name ILIKE '%sportsman%';")
@@ -11,17 +13,18 @@ flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
 getTemperatureModelParameters=function(locationID,date=as.Date("2021-07-01"),flowModel=readRDS(file="~/Dropbox/SilverCreek/flowModel.rds"),airTempReferenceLocation=180){
   
+  #print(paste("l:",locationID,"d:",date))
   
   date=as.Date(date)
   indexFlow=dbGetQuery(conn(),paste0("SELECT AVG(value) AS flow FROM data WHERE locationid = '",flowIndexLocationID,
                                      "' AND datetime::date = '",date,"' AND metric = 'flow';"))$flow
   
-  uaa=dbGetQuery(conn(),paste0("SELECT wshedareakm AS uaa FROM locationattributes WHERE locationid = '",locationID,"';"))
+  uaa=dbGetQuery(conn(),paste0("SELECT wshedareakm AS uaa FROM locationattributes WHERE locationid = '",locationID,"';"))$uaa
   
   flow=predict(flowModel,newdata=data.frame(indexFlow=indexFlow,uaa=uaa))*indexFlow
   
   
-  resid=calcMeanResidence(outflowLocationID = locationID,useResidenceFunction = F)
+  resid=calcMeanResidence(indexFlow=indexFlow,outflowLocationID = locationID,useResidenceFunction = F)
   
   #air temperature within 50 km
   # airTemp=dbGetQuery(conn(),paste0("SELECT AVG(value) FROM data WHERE data.metric = 'air temperature' AND data.datetime BETWEEN '",date-5,"' AND '",date+1,"'
@@ -49,6 +52,19 @@ temperatureData=dbGetQuery(conn(),paste0("SELECT AVG(data.value) AS temperature,
                                          GROUP BY data.datetime::date, data.locationid;")
 )
 
+system.time(
+  getTemperatureModelParameters(3)
+)
 
-temperatureParamDF=do.call(rbind,mapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,SIMPLIFY = F))
+
+temperatureParamDF=do.call(rbind,pbmapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,SIMPLIFY = F))
 temperatureParamDF=merge(temperatureParamDF,temperatureData)
+
+#temperatureParamDF$airTempScalar=1-exp(-temperatureParamDF$residence/temperatureParamDF$flow)
+
+write.csv(temperatureParamDF,file=paste0("~/temperatureParamaterSet_",Sys.Date(),".csv"))
+
+m=glm(temperatureParamDF$temperature~temperatureParamDF$airTemp+temperatureParamDF$flow+temperatureParamDF$residence)
+summary(m)
+
+summary(nls(temperature~I( airTemp*1-exp( exp_coef*(-residence/flow) ) ),data=temperatureParamDF,start=list(exp_coef=0)))

@@ -393,6 +393,9 @@ distributeFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dro
   streamPoints=st_read(conn(),query=paste0("SELECT * from streampoints WHERE st_within(streampoints.geometry,
                                               (SELECT geometry FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"')
                                            );"))
+  if(nrow(streamPoints)==0){
+    return(streamPoints)
+  }
   streamPoints$indexFlow=indexFlow
   streamPoints$flowIndex=predict(flowModel,streamPoints)
   streamPoints$flow=streamPoints$indexFlow*streamPoints$flowIndex
@@ -410,17 +413,16 @@ distributeFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dro
 calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunction=F,meanIndexFlow=140,length=9.42){
   flowPoints=distributeFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
   
+  if(nrow(flowPoints)==0){
+    return(NA)
+  }
+  
   if(useResidenceFunction){
-    
-    
-    meanFlowPoints=distributeFlow(indexFlow = meanIndexFlow,outflowLocationID = outflowLocationID)[,c("uaa","geometry","flow")]
-    names(meanFlowPoints)[3]="meanFlow"
-    flowPoints=st_join(flowPoints,meanFlowPoints)
-    
-    flowPoints$velocityIndex=flowPoints$meanFlow + ( 0.34 / (flowPoints$flow-flowPoints$meanFlow)^.66 )
+  
+    #broken!
     
   } else {
-    print("using 'steam point' as unit of residence")
+    #print("using 'steam point' as unit of residence")
     flowPoints$residence=1
   }
   
