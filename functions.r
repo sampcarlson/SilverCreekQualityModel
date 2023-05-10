@@ -41,7 +41,7 @@ getColor=function(reps){
 
 listDataSeries=function(){
   #allSeries=dbGetQuery(conn(),"SELECT DISTINCT locationid, metricid FROM data;")
-  allSeries=dbGetQuery(conn(),"SELECT DISTINCT metricid, locationid, MIN(datetime) ,MAX(datetime), COUNT(datetime) FROM data GROUP BY metricid, locationid;")
+  allSeries=dbGetQuery(conn(),"SELECT DISTINCT metricid, locationid, MIN(datetime) ,MAX(datetime), COUNT(datetime), FROM data GROUP BY metricid, locationid;")
   allSeries=merge(allSeries, dbGetQuery(conn(),"SELECT metricid, name FROM metrics;"))
   allSeries$seriesid=1:nrow(allSeries)
   allSeries=allSeries[,c("seriesid","locationid","metricid","name","count","min","max")]
@@ -142,6 +142,24 @@ getInWatershed=function(watershedID=NULL,outflowLocationID=NULL,metricNames=NULL
   return(locations)
 }
 
+snapPointsToPoints=function(points_to_snap,snapPoints,maxSnapDistance=100){
+  #snap array pts to pts along network lines:
+  
+  for(i in 1:nrow(points_to_snap)){ #iterate through points
+    near=st_nearest_points(points_to_snap[i,],snapPoints)  #find line to all snapPoints
+    thisLocation=st_geometry( 
+      st_cast(near[which.min(st_length(near))],"POINT")[2] #find geometry of nearest snap point. [2] returns 'to' point of st_nearest line
+    )  
+    
+    if(as.numeric(st_distance(points_to_snap[i,],thisLocation))<maxSnapDistance){
+      print(paste("Point",points_to_snap$name[i],"snapped to target point at distance of", round(st_distance(points_to_snap[i,],thisLocation),1), "meters"))
+      st_geometry( points_to_snap[i,] ) = st_geometry( thisLocation )
+    }  else{
+      print(paste("Point",points_to_snap$name[i],"not snapped due to excessive distance of", round(st_distance(points_to_snap[i,],thisLocation),1), "meters"))
+    }
+  }
+  return(points_to_snap)
+}
 
 snapPointsToLines=function(points_to_snap,target_lines,maxSnapDistance=100){
   #First define points along lines to snap to...
@@ -186,7 +204,7 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
       done=T
     } else {
       areaInfo=getStr_worker(location,uaaRast,distance)
-      #print(paste("distance:",distance))
+      print(paste("Point snapped to raster at distance of ",distance,"meters"))
       #print(paste("Max UAA:",round(max(areaInfo$uaa))))
       if(max(areaInfo$uaa)>uaaThreshold){ #found a pixel w/ sufficient uaa
         maxCell=areaInfo[which.max(areaInfo$uaa),]$cell
@@ -198,7 +216,6 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
   }
   #create point geometry, transform from raster crs to location CRS
   if(!is.null(maxCoords)){
-    print(maxCoords)
     #maxCoords=as.matrixmaxCoords)
     #print(maxCoords)
     thisPoint=st_point(maxCoords)
@@ -422,8 +439,10 @@ calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunct
     #broken!
     
   } else {
-    #print("using 'steam point' as unit of residence")
-    flowPoints$residence=1
+    #print("using meters as unit of residence")
+    
+    #Silver creek watershed:  17596 points in 106445.5 of total stream length
+    flowPoints$residence=6.049
   }
   
   

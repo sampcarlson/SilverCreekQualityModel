@@ -3,9 +3,9 @@ source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
 dbGetQuery(conn(),"SELECT * FROM locations WHERE locations.name ILIKE '%sportsman%';")
 flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
-#upstream locations:  144 is sportsmans, 147 is ragsdale (station 10?) just above sc-lw confluence 
+#upstream locations:  144 is sportsmans, 147 is ragsdale just above sc-lw confluence, 148 is station 10 further down the little wood (richfield) 
 
-allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 147)
+allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 148)
 
 #n per day:
 dayN=aggregate(locationid~date, data=allFlowData, FUN=length)
@@ -39,8 +39,8 @@ rich_flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=rich_flow)
 summary(rich_flowModel)
 
 plot(flow$flowIndex[flow$date %in% bestDataDays]~flow$uaa[flow$date %in% bestDataDays])
-lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=100))~c(0:250))
-lines(predict(rich_flowModel,data.frame(uaa=0:250,indexFlow=100))~c(0:250),lty=2)
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100))~c(0:2050))
+lines(predict(rich_flowModel,data.frame(uaa=0:2050,indexFlow=100))~c(0:2050),lty=2)
 
 
 
@@ -67,7 +67,7 @@ sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,r
     if(highlightLocationID %in% sampleFlow$locationid){
       points(sampleFlow$flowIndex[sampleFlow$locationid==highlightLocationID]~sampleFlow$uaa[sampleFlow$locationid==highlightLocationID],pch="*",cex=3)
     }
-    varDF=data.frame(uaa=0:250,indexFlow=sampleFlow$indexFlow[1])
+    varDF=data.frame(uaa=0:2050,indexFlow=sampleFlow$indexFlow[1])
     
     lines(predict(m,varDF)~varDF$uaa,lty=2)
     if(!is.null(compareModel)){
@@ -91,9 +91,9 @@ sampleModel=function(sampleStartDate,sampleEndDate=NULL,compareModel=flowModel,r
 
 #plot whole season, examine effect of indexFlow
 sampleModel("2021-06-01","2021-09-30")
-lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=50))~c(0:250),col="red")
-lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=100))~c(0:250),col="orange")
-lines(predict(flowModel,data.frame(uaa=0:250,indexFlow=200))~c(0:250),col="blue")
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=50))~c(0:2050),col="red")
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100))~c(0:2050),col="orange")
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=200))~c(0:2050),col="blue")
 
 
 sampleModel("2021-9-15")
@@ -104,8 +104,8 @@ sampleDates=sampleDates[inSeason(sampleDates)]
 modelPerformance=do.call(rbind,lapply(sampleDates,FUN=sampleModel))
 head(modelPerformance)
 
-plot(modelPerformance$error~modelPerformance$locationid)
-plot(modelPerformance$pctError~modelPerformance$locationid)
+plot(modelPerformance$error~modelPerformance$uaa)
+plot(modelPerformance$pctError~modelPerformance$uaa)
 
 
 modelPerfSummary=aggregate(cbind(errorPtSize,flowIndex,pred,error,pctError)~locationid, data=modelPerformance, FUN=mean)
@@ -118,7 +118,8 @@ modelLocations=st_read(conn(),query=paste0("SELECT * FROM locationattributes WHE
 modelLocations=merge(modelLocations,modelPerfSummary,by="locationid")
 modelLocations=merge(modelLocations,siteDayCount,by="locationid")
 st_write(modelLocations,dsn="~/Dropbox/SilverCreek/SilverCreekSpatial/modelPerformance.gpkg",delete_dsn=T)
-#odd dataset:
+
+
 
 mp=sampleModel("2021-07-12")
 
