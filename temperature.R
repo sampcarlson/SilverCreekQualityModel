@@ -95,10 +95,27 @@ temperatureParamDF=merge(temperatureParamDF,temperatureData)
 temperatureParamDF$doy=as.numeric(format.Date(temperatureParamDF$date,"%j"))
 
 write.csv(temperatureParamDF,file=paste0(getwd(),"/temperatureParamaterSet_",Sys.Date(),".csv"))
-#temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-05-09.csv"))
+#temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-05-11.csv"))
+
+modelLocations=st_read(conn(),query=paste0("SELECT locationid, name, wshedareakm, metrics, locationgeometry FROM locationattributes WHERE locationid IN ('",
+                                           paste(unique(temperatureParamDF$locationid), collapse="', '"),"');"))
+temperatureParamDF=merge(temperatureParamDF,data.frame(locationid=modelLocations$locationid,wshedArea=modelLocations$wshedareakm))
+
+
+maxSunAngleFun=function(doy){
+ 43+23.45*sin((2*pi/360)*(360/365)*(doy-81))
+}
+
+temperatureParamDF$maxSunElevation=sunAngleFun(temperatureParamDF$doy)
+
+#exclude 3 sites immediatly downstream of ponds:
+dbGetQuery(conn(),"SELECT * FROM locations WHERE locationid IN ('8', '43', '37');")
+temperatureParamDF=temperatureParamDF[!temperatureParamDF$locationid %in% c(8,43,37),]
 
 
 plot(temperatureParamDF$meantemp~temperatureParamDF$doy)
+plot(temperatureParamDF$maxtemp~temperatureParamDF$doy)
+
 
 plot(temperatureParamDF$meantemp~temperatureParamDF$meanAirTemp)
 plot(temperatureParamDF$meantemp[temperatureParamDF$date==as.Date("2020-07-15")]~temperatureParamDF$residence[temperatureParamDF$date==as.Date("2020-07-15")])
@@ -115,7 +132,7 @@ dev.off()
 
 
 
-m=lm(temperatureParamDF$meantemp~temperatureParamDF$meanAirTemp+temperatureParamDF$flow*temperatureParamDF$residence+temperatureParamDF$doy)
+m=lm(temperatureParamDF$meantemp~temperatureParamDF$meanAirTemp+temperatureParamDF$maxAirTemp+temperatureParamDF$flow*temperatureParamDF$residence+temperatureParamDF$doy+temperatureParamDF$wshedArea)
 summary(m)
 sigma(m)
 
@@ -125,13 +142,33 @@ sigma(m)
 m=nls(meantemp~I(intercept+springTemp*(exp(-expCoef*residence/flow )) + atmCoef*meanAirTemp*(1-exp(-expCoef*residence/flow )) ),data=temperatureParamDF,start=list(intercept=0,springTemp=10,atmCoef=1,expCoef=.008),control=list(maxiter=500, minFactor=1e-6))
 summary(m)
 
+m=nls(meantemp~I(intercept+sunCoef*maxSunElevation+residCoef*residence+springTemp*(exp(-expCoef*residence/flow )) + atmCoef*meanAirTemp*(1-exp(-expCoef*residence/flow )) ),
+      data=temperatureParamDF,
+      start=list(intercept=0,springTemp=10,atmCoef=1,expCoef=.008,sunCoef=.1,residCoef=.1),
+      control=list(maxiter=500, minFactor=1e-6))
+summary(m)
+
+# m=nls(meantemp~I(springTemp + atmCoef*meanAirTemp*(1-exp(-expCoef*residence/flow )) ),data=temperatureParamDF,start=list(springTemp=10,atmCoef=1,expCoef=.008),control=list(maxiter=500, minFactor=1e-6))
+# summary(m)
+# 
+# m=nls(meantemp~I(springTemp + atmCoef*(meanAirTemp-springTemp)*(1-exp(-expCoef*wshedArea/flow )) ),data=temperatureParamDF,start=list(springTemp=10,atmCoef=1,expCoef=.008),control=list(maxiter=500, minFactor=1e-6))
+# summary(m)
+
+# m=nls(meantemp~I(springTemp*(exp(-expCoef*residence/flow )) + atmCoef*meanAirTemp*(1-exp(-expCoef*residence/flow )) ),data=temperatureParamDF,start=list(springTemp=10,atmCoef=1,expCoef=.008),control=list(maxiter=500, minFactor=1e-6))
+# summary(m)
+# 
+# m=nls(meantemp~I(intercept+springTemp*(exp(-expCoef*residence/flow )) + atmCoef*meanAirTemp*(1-exp(-expCoef*residence/flow )) + residCoef*wshedArea),data=temperatureParamDF,start=list(intercept=0,springTemp=10,atmCoef=1,expCoef=.1,residCoef=0),control=list(maxiter=500, minFactor=1e-6))
+# summary(m)
+
+
+
 
 temperatureParamDF$predictedTemp=predict(m,newdata = temperatureParamDF)
 temperatureParamDF$resid=temperatureParamDF$predictedTemp-temperatureParamDF$meantemp
 plot(temperatureParamDF$predictedTemp~temperatureParamDF$meantemp)
+summary(lm(temperatureParamDF$predictedTemp~temperatureParamDF$meantemp))
 
-modelLocations=st_read(conn(),query=paste0("SELECT locationid, name, wshedareakm, metrics, locationgeometry FROM locationattributes WHERE locationid IN ('",
-                                                 paste(unique(temperatureParamDF$locationid), collapse="', '"),"');"))
+
 
 modelLocations$residence=0
 modelLocations$meanError=0
@@ -145,4 +182,11 @@ for( i in 1:nrow(modelLocations)){
   modelLocations$meanAbsError[i]=mean(abs(thisData$resid),na.rm=T)
 }
 
-st_write(modelLocations,"~/Dropbox/SilverCreek/SilverCreekSpatial/tempModelPerformance.gpkg")
+st_write(modelLocations,"~/Dropbox/SilverCreek/SilverCreekSpatial/tempModelPerformance.gpkg",append=F)
+
+plot(modelLocations$meanError~modelLocations$residence)
+
+plot(modelLocations$meanError~modelLocations$wshedareakm)
+
+
+plot(1-exp(-.018*temperatureParamDF$residence/temperatureParamDF$flow)~temperatureParamDF$wshedArea)
