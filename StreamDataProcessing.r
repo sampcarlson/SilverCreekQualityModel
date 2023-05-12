@@ -1,5 +1,5 @@
 source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
-
+library(pbapply)
 
 ############# carve channels into dem to concentrate flow -------------
 useFlowSink=T
@@ -163,7 +163,7 @@ dbExecute(conn(),"TRUNCATE TABLE watersheds RESTART IDENTITY;")
 
 useLocationsList=split(useLocations,useLocations$locationid)
 
-wshedsInfo=sapply(useLocationsList,calcWshed)  #calcWshed() writes to db
+wshedsInfo=pbsapply(useLocationsList,calcWshed)  #calcWshed() writes to db
 
 
 ######## refresh locationattributes

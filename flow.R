@@ -31,6 +31,7 @@ plot(flow$flowIndex~flow$uaa)
 
 flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=flow)
 summary(flowModel)
+sigma(flowModel)
 
 # model fit limited to best data days:
 bestDataDays=dayN$date[dayN$locationid>=10]

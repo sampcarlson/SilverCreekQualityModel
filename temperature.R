@@ -56,7 +56,7 @@ getTemperatureModelParameters=function(locationID,date,flowModel=readRDS(file="~
   }
   
   maxAirTemp=fToC(airTemps$max)
-  meanAirTemp=fT0C(airTemps$avg)
+  meanAirTemp=fToC(airTemps$avg)
   
   return(data.frame(locationid=locationID,date=date,flow=flow,residence=resid,meanAirTemp=meanAirTemp,maxAirTemp=maxAirTemp))
 }
@@ -72,6 +72,11 @@ temperatureData=dbGetQuery(conn(),paste0("SELECT AVG(data.value) AS meantemp, MA
            WHERE data.qcstatus='true' AND metric = 'Water Temperature' AND ST_WITHIN(locations.geometry, (SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid = '",tempModelBaseLocationID,"'))
                                          GROUP BY data.datetime::date, data.locationid;")
 )
+
+# exclude well location - though it may be interesting for comparison...
+dbGetQuery(conn(),"SELECT * FROM locations WHERE locationid = 63;")
+temperatureData=temperatureData[!temperatureData$locationid == 63,]
+
 #time per location*date
 system.time(
   getTemperatureModelParameters(3,"2021-07-01")
