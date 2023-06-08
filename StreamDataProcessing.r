@@ -134,7 +134,8 @@ useLocations$snapped=F
 
 for(i in 1:nrow(useLocations)){
   thisLocation=useLocations[i,]
-  if(thisLocation$metric %in% c("flow","Water Temperature", "Dissolved Oxygen", "predicted daily flow")){ #try to snap to stream
+  thisLocationMetrics=useLocations$metric[useLocations$locationid == thisLocation$locationid]
+  if( any(thisLocationMetrics %in% c("flow","Water Temperature", "Dissolved Oxygen", "predicted daily flow"))){ #try to snap to stream
     if(thisLocation$locationid %in% scIDs){ #in sliver creek watershed, snap to streampoints
       thisPoint=snapPointsToPoints(thisLocation,scStreamPoints,maxSnapDistance = snapDistance)
     } else { # no streampoints outside of SC watershed, snap to raster instead
