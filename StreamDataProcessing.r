@@ -5,15 +5,12 @@ library(pbapply)
 useFlowSink=T
 
 dem=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem.tif")
+InitGrass_byRaster(dem,"dem")
+
 streamline=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/nhdFlowline_simplify.gpkg")
 streamline=st_transform(streamline,crs=st_crs(dem))
 
-streamCells=extract(dem,vect(streamline),cells=T)
-
-dem[streamCells$cell]=dem[streamCells$cell]-10
-
-writeRaster(dem,"~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem_carve.tif",overwrite=T)
-
+scWshed=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/silverCreekWatershedExtent.gpkg")
 
 #use flowSink polygons to define 'the optional map of actual depressions or sinkholes in the landscape that are large enough to slow and store surface runoff from a storm event.'
 #All cells that are not NULL and not zero indicate depressions. Water will flow into but not out of depressions. 
@@ -29,11 +26,12 @@ if(useFlowSink){
   dem[demSinkCells$cell]=dem[demSinkCells$cell]-100
   
 }
+writeRaster(dem,"~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem_carve.tif",overwrite=T)
+
 
 
 ############# calculate flowdir, uaa from r.watershed---------------
 
-InitGrass_byRaster(dem,"dem")
 
 if(useFlowSink){
   write_RAST(flowSinkRaster,"flowSink")
@@ -63,63 +61,66 @@ if(useFlowSink){
 }
 
 
-###################### create stream points -------------
 
-allStreams=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/nhdFlowline_simplify.gpkg")
-#everything above little wood confluence:
-scArea=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/silverCreekWatershedExtent.gpkg")
-scStreams=st_intersection(st_zm(allStreams),scArea)
+######## segment streamlines within sc watershed--------
+
+#lots of io time to do this in grass, but it works...
+scStreamline=st_intersection(st_zm(streamline),st_zm(scWshed))
+write_VECT(vect(scStreamline),"streamline",flags="overwrite")
+execGRASS("v.split", input="streamline",output="streamSegs",length=50,units="meters",flags="overwrite")
+streamSegs=st_as_sf(read_VECT("streamSegs"))
+
+#drop extra info from nhd, keep one id in cas it is usefull in the future:
+streamSegs=streamSegs[,"NHDPlusID"]
+streamSegs$segid=1:nrow(streamSegs)
+###################### streamSegs characteristics
+uaa=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/uaa_km_sink.tif")
+
+streamSegs$uaa=extract(uaa, vect(streamSegs),list=F,fun=median)[,2]
+
+st_write(streamSegs,"~/Dropbox/SilverCreek/SilverCreekSpatial/streamSegs.gpkg")
+
+# scStreamPoints=st_as_sf(scStreamPoints,coords = c("x","y"),crs=st_crs(scStreams))
+# 
+# ######################limit points to those w/ >=,1 km uaa
+# #scStreamPoints=scStreamPoints[scStreamPoints$uaa>=.1,]
+# 
+# #add elevation and slope attributes
+# 
+# scStreamPoints$elevation=extract(rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem.tif"),vect(scStreamPoints))$Layer_1
+# scStreamPoints$pointid=1:nrow(scStreamPoints)
+# 
+# slopeDistance=50
+# 
+# scStreamPointsNearby=st_join(scStreamPoints,scStreamPoints[,c("elevation")],join=st_is_within_distance,dist=slopeDistance)
+# 
+# spread=function(x){
+#   return(max(x)-min(x))
+# }
+# 
+# scStreamPoints_elevrange=aggregate(scStreamPointsNearby[,c("pointid","elevation.y")],list(pointid=scStreamPointsNearby$pointid),FUN=spread)
+# scStreamPoints_elevrange$slope=scStreamPoints_elevrange$elevation.y/(2*slopeDistance)
+# 
+# scStreamPoints=merge(scStreamPoints,data.frame(scStreamPoints_elevrange[,c("pointid","slope")]))
+# 
+# 
+# 
+# dbExecute(conn(),"TRUNCATE TABLE streampoints RESTART IDENTITY;")
+# st_write(scStreamPoints,conn(),"streampoints")
 
 
-
-scStreamPoints=extract(rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/uaa_km_sink.tif"),
-                       vect(scStreams),
-                       touches=T,xy=T)
-
-scStreamPoints=scStreamPoints[,c("uaa_cells_sink","x","y")]
-names(scStreamPoints)[1]="uaa"
-scStreamPoints=st_as_sf(scStreamPoints,coords = c("x","y"),crs=st_crs(scStreams))
-
-######################limit points to those w/ >=,1 km uaa
-#scStreamPoints=scStreamPoints[scStreamPoints$uaa>=.1,]
-
-#add elevation and slope attributes
-
-scStreamPoints$elevation=extract(rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem.tif"),vect(scStreamPoints))$Layer_1
-scStreamPoints$pointid=1:nrow(scStreamPoints)
-
-slopeDistance=50
-
-scStreamPointsNearby=st_join(scStreamPoints,scStreamPoints[,c("elevation")],join=st_is_within_distance,dist=slopeDistance)
-
-spread=function(x){
-  return(max(x)-min(x))
-}
-
-scStreamPoints_elevrange=aggregate(scStreamPointsNearby[,c("pointid","elevation.y")],list(pointid=scStreamPointsNearby$pointid),FUN=spread)
-scStreamPoints_elevrange$slope=scStreamPoints_elevrange$elevation.y/(2*slopeDistance)
-
-scStreamPoints=merge(scStreamPoints,data.frame(scStreamPoints_elevrange[,c("pointid","slope")]))
-
-
-
-dbExecute(conn(),"TRUNCATE TABLE streampoints RESTART IDENTITY;")
-st_write(scStreamPoints,conn(),"streampoints")
-
-
-
-######## calculate watersheds for each location in db, write to watersheds table
+######## calculate watersheds for each location in db, write to watersheds table ----------
 uaaThreshold=.5
 snapDistance=100
 
-uaa=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/uaa_km_sink.tif")                        
+                  
 flowdir=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/flowDir_carve_sink.tif")
 #scNet=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/scNet.gpkg")
 allLocations=st_read(dsn=conn(),query="SELECT DISTINCT locations.locationid, name, geometry, sourcenote, sitenote, source_site_id, metric, metricid 
         FROM locations LEFT JOIN data ON locations.locationid = data.locationid;")
 
 #Silver Creek only
-scIDs=st_intersection(allLocations,st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/silverCreekWatershedExtent.gpkg"))$locationid
+scIDs=st_intersection(allLocations,scWshed)$locationid
 
 #whole area
 useLocations=allLocations
@@ -129,7 +130,10 @@ useLocations=allLocations
 #getNearestStream_rast(location=useLocations[1,],uaaRast=uaa,maxDistance=1000,uaaThreshold = uaaThreshold)
 
 ##########-----------snap to streams ----------
-scStreamPoints=st_read(conn(),query="SELECT * FROM streampoints;")
+#scStreamPoints=st_read(conn(),query="SELECT * FROM streampoints;")
+scStreamPoints=st_line_sample(st_cast(st_zm(scStreamline),"LINESTRING"),density=.5)
+scStreamPoints=st_cast(scStreamPoints,"POINT")
+
 useLocations$snapped=F
 
 for(i in 1:nrow(useLocations)){
@@ -170,13 +174,4 @@ wshedsInfo=pbsapply(useLocationsList,calcWshed)  #calcWshed() writes to db
 ######## refresh locationattributes
 
 dbExecute(conn(),"REFRESH MATERIALIZED VIEW locationattributes;")
-#dbExecute(conn(), "DROP MATERIALIZED VIEW locationattributes")
-
-
-# dbExecute(conn(), "CREATE MATERIALIZED VIEW locationattributes AS SELECT ROW_NUMBER() OVER(), met.locationid, met.name, met.locationgeometry, met.metrics, wsh.wshedareakm, wsh.watershedgeometry FROM
-#                       (SELECT DISTINCT locations.name, locations.locationid, locations.geometry AS locationgeometry, STRING_AGG(DISTINCT(data.metric), ',') AS metrics FROM locations LEFT JOIN data ON locations.locationid = data.locationid GROUP BY locations.locationid) met
-#                      LEFT JOIN 
-#                       (SELECT locations.locationid, watersheds.geometry AS watershedgeometry, ST_AREA(watersheds.geometry)/1000000 AS wshedareakm FROM locations LEFT JOIN watersheds ON locations.locationid = watersheds.outflowlocationid) wsh
-#                       ON met.locationid = wsh.locationid;")
-
 

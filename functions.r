@@ -204,12 +204,13 @@ getNearestStream_rast=function(location,uaaRast,maxDistance,uaaThreshold,distanc
       done=T
     } else {
       areaInfo=getStr_worker(location,uaaRast,distance)
-      print(paste("Point snapped to raster at distance of ",distance,"meters"))
+      #print(paste("Point snapped to raster at distance of ",distance,"meters"))
       #print(paste("Max UAA:",round(max(areaInfo$uaa))))
       if(max(areaInfo$uaa)>uaaThreshold){ #found a pixel w/ sufficient uaa
         maxCell=areaInfo[which.max(areaInfo$uaa),]$cell
         maxCoords=xyFromCell(uaa,maxCell)
         done=T
+        print(paste("Point",location$name[1],"snapped to raster at distance of ",distance,"meters"))
       }
       distance = distance + distanceIncriment
     }
