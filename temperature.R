@@ -67,7 +67,6 @@ dbGetQuery(conn(), "SELECT locationid, name, metrics, wshedareakm FROM locationa
 #aggregate by day - no need for multiple models per day
 
 
-
 temperatureData=dbGetQuery(conn(),paste0("SELECT AVG(data.value) AS meantemp, MAX(data.value) as maxTemp, data.datetime::date AS date, data.locationid FROM data LEFT JOIN locations ON data.locationid = locations.locationid 
            WHERE data.qcstatus='true' AND metric = 'Water Temperature' AND ST_WITHIN(locations.geometry, (SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid = '",tempModelBaseLocationID,"'))
                                          GROUP BY data.datetime::date, data.locationid;")
@@ -95,27 +94,28 @@ temperatureParamDF=merge(temperatureParamDF,temperatureData)
 temperatureParamDF$doy=as.numeric(format.Date(temperatureParamDF$date,"%j"))
 
 write.csv(temperatureParamDF,file=paste0(getwd(),"/temperatureParamaterSet_",Sys.Date(),".csv"))
-#temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-05-11.csv"))
+#temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-06-14.csv"))
 
 modelLocations=st_read(conn(),query=paste0("SELECT locationid, name, wshedareakm, metrics, locationgeometry FROM locationattributes WHERE locationid IN ('",
                                            paste(unique(temperatureParamDF$locationid), collapse="', '"),"');"))
 temperatureParamDF=merge(temperatureParamDF,data.frame(locationid=modelLocations$locationid,wshedArea=modelLocations$wshedareakm))
-
+temperatureParamDF$date=as.Date(temperatureParamDF$date)
 
 maxSunAngleFun=function(doy){
  43+23.45*sin((2*pi/360)*(360/365)*(doy-81))
 }
 
-temperatureParamDF$maxSunElevation=sunAngleFun(temperatureParamDF$doy)
+temperatureParamDF$maxSunElevation=maxSunAngleFun(temperatureParamDF$doy)
 
-#exclude 3 sites immediatly downstream of ponds:
+#exclude 3 sites immediately downstream of ponds:
 dbGetQuery(conn(),"SELECT * FROM locations WHERE locationid IN ('8', '43', '37');")
 temperatureParamDF=temperatureParamDF[!temperatureParamDF$locationid %in% c(8,43,37),]
 
+plot(temperatureParamDF$meantemp~temperatureParamDF$date)
 
 plot(temperatureParamDF$meantemp~temperatureParamDF$doy)
 plot(temperatureParamDF$maxtemp~temperatureParamDF$doy)
-
+plot(temperatureParamDF$meantemp~temperatureParamDF$maxSunElevation)
 
 plot(temperatureParamDF$meantemp~temperatureParamDF$meanAirTemp)
 plot(temperatureParamDF$meantemp[temperatureParamDF$date==as.Date("2020-07-15")]~temperatureParamDF$residence[temperatureParamDF$date==as.Date("2020-07-15")])
@@ -127,12 +127,13 @@ plot(temperatureParamDF$meantemp/temperatureParamDF$meanAirTemp~temperatureParam
 
 
 pdf(file="allPlot.pdf",width=18,height=14)
-plot(temperatureParamDF[,c("meantemp","maxtemp","flow","residence","meanAirTemp","maxAirTemp","doy")])
+plot(temperatureParamDF[,c("meantemp","maxtemp","flow","residence","meanAirTemp","maxAirTemp","doy","maxSunElevation")])
 dev.off()
 
 
 
-m=lm(temperatureParamDF$meantemp~temperatureParamDF$meanAirTemp+temperatureParamDF$maxAirTemp+temperatureParamDF$flow*temperatureParamDF$residence+temperatureParamDF$doy+temperatureParamDF$wshedArea)
+m=lm(temperatureParamDF$meantemp~temperatureParamDF$meanAirTemp+temperatureParamDF$maxAirTemp+temperatureParamDF$flow*temperatureParamDF$residence+
+       temperatureParamDF$doy+temperatureParamDF$wshedArea+temperatureParamDF$maxSunElevation)
 summary(m)
 sigma(m)
 
@@ -165,7 +166,12 @@ summary(m)
 
 temperatureParamDF$predictedTemp=predict(m,newdata = temperatureParamDF)
 temperatureParamDF$resid=temperatureParamDF$predictedTemp-temperatureParamDF$meantemp
+
 plot(temperatureParamDF$predictedTemp~temperatureParamDF$meantemp)
+abline(a=0,b=1,col="blue")
+highlightid=29
+points(temperatureParamDF$predictedTemp[temperatureParamDF$locationid==highlightid]~temperatureParamDF$meantemp[temperatureParamDF$locationid==highlightid],pch="*",col="red")
+
 summary(lm(temperatureParamDF$predictedTemp~temperatureParamDF$meantemp))
 
 
@@ -189,4 +195,4 @@ plot(modelLocations$meanError~modelLocations$residence)
 plot(modelLocations$meanError~modelLocations$wshedareakm)
 
 
-plot(1-exp(-.018*temperatureParamDF$residence/temperatureParamDF$flow)~temperatureParamDF$wshedArea)
+plot(1-exp(-.016*temperatureParamDF$residence/temperatureParamDF$flow)~temperatureParamDF$wshedArea)

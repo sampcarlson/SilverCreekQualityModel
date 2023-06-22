@@ -38,6 +38,7 @@ bestDataDays=dayN$date[dayN$locationid>=10]
 rich_flow=flow[flow$date %in% bestDataDays,]
 rich_flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=rich_flow)
 summary(rich_flowModel)
+sigma(rich_flowModel)
 
 plot(flow$flowIndex[flow$date %in% bestDataDays]~flow$uaa[flow$date %in% bestDataDays])
 lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100))~c(0:2050))

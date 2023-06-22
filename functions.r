@@ -408,53 +408,54 @@ distributeFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dro
     stop("indexFlow must be single value")
   }
   
-  streamPoints=st_read(conn(),query=paste0("SELECT * from streampoints WHERE st_within(streampoints.geometry,
+  streamSegs=st_read(conn(),query=paste0("SELECT * from streamsegments WHERE st_intersects(streamsegments.geometry,
                                               (SELECT geometry FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"')
                                            );"))
-  if(nrow(streamPoints)==0){
-    return(streamPoints)
+  #minor issue:
+  #figure out hos to use st_intersection instead to get the portion of segments within the watershed.  
+  #currently headwater points heg inflated residence values as whole segments are returned.
+
+  
+  if(nrow(streamSegs)==0){
+    return(streamSegs)
   }
-  streamPoints$indexFlow=indexFlow
-  streamPoints$flowIndex=predict(flowModel,streamPoints)
-  streamPoints$flow=streamPoints$indexFlow*streamPoints$flowIndex
+  streamSegs$indexFlow=indexFlow
+  streamSegs$flowIndex=predict(flowModel,streamSegs)
+  streamSegs$flow=streamSegs$indexFlow*streamSegs$flowIndex
   
   #map plot
-  #plot(streamPoints[,"flow"])
+  #plot(streamSegs[,"flow"])
   
   #flow vs uaa plot
-  #plot(streamPoints$flow~streamPoints$uaa)
+  #plot(streamSegs$flow~streamSegs$uaa)
   
-  return(streamPoints)
+  return(streamSegs)
 }
 
 
-calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunction=F,meanIndexFlow=140,length=9.42){
-  flowPoints=distributeFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
+calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunction=F,meanIndexFlow=140){
+  flowSegs=distributeFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
   
-  if(nrow(flowPoints)==0){
+  if(nrow(flowSegs)==0){
     return(NA)
   }
   
   if(useResidenceFunction){
-  
-    #broken!
+    
+    #need segment wise width or depth, or other information to estimate velocity
     
   } else {
     #print("using meters as unit of residence")
-    
-    #Silver creek watershed:  17596 points in 106445.5 of total stream length
-    flowPoints$residence=6.049
+    flowSegs$residence=flowSegs$length
   }
-  
-  
   
   #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
   #note that max(Qs) is just outflow Q
-  maxFlow=max(flowPoints$flow)
+  maxFlow=max(flowSegs$flow)
   #print(maxFlow)
   meanRes=0
-  for(i in 1:nrow(flowPoints)){
-    meanRes=meanRes+flowPoints$residence[i]*flowPoints$flow[i]/maxFlow
+  for(i in 1:nrow(flowSegs)){
+    meanRes=meanRes+flowSegs$residence[i]*flowSegs$flow[i]/maxFlow
   }
   return(meanRes)
 }
