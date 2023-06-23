@@ -403,10 +403,17 @@ getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
 }
 
 
-distributeFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")){
+distributeFlow=function(indexFlow,baseID,isSegID=F,flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")){# if not segID, assumed to be location id
   if(length(indexFlow)!=1){
     stop("indexFlow must be single value")
   }
+  
+  if(isSegID){
+    streamSegs=getUpstream(baseID)
+  } else {
+    streamSegs=getUpstream_scLocation(baseID)
+  }
+  streamSegs
   
   streamSegs=st_read(conn(),query=paste0("SELECT * from streamsegments WHERE st_intersects(streamsegments.geometry,
                                               (SELECT geometry FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"')
@@ -414,7 +421,7 @@ distributeFlow=function(indexFlow,outflowLocationID=147,flowModel=readRDS("~/Dro
   #minor issue:
   #figure out hos to use st_intersection instead to get the portion of segments within the watershed.  
   #currently headwater points heg inflated residence values as whole segments are returned.
-
+  
   
   if(nrow(streamSegs)==0){
     return(streamSegs)
@@ -441,11 +448,10 @@ calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunct
   }
   
   if(useResidenceFunction){
-    
     #need segment wise width or depth, or other information to estimate velocity
-    
+    break("residence function not defined")
   } else {
-    #print("using meters as unit of residence")
+    #print("using length as unit of residence")
     flowSegs$residence=flowSegs$length
   }
   
@@ -460,3 +466,60 @@ calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunct
   return(meanRes)
 }
 
+
+getUpstream=function(segid){
+  us=dbGetQuery(conn(), paste0("WITH RECURSIVE upstreamof(segid) AS (
+                          SELECT us_segid FROM usds WHERE ds_segid = '",segid,"'
+                      UNION ALL
+                          SELECT u.us_segid FROM usds u
+                          JOIN upstreamof ON u.ds_segid = upstreamof.segid
+                      )
+                      SELECT * FROM upstreamof;"))
+  us=rbind(us, data.frame(segid=segid))
+  return(us)
+}
+
+# system.time({
+#   u=getUpstream(358)
+# })
+#I like ^^^ this ^^^ one better, but the R implementation is faster - downloads the data only once
+
+
+
+# getUpstream=function(segid){
+#   recursionCount=0
+#   assign("recursionCount",recursionCount,envir=globalenv())
+#   if(!exists("usds",where=globalenv())){      #usds does not exist - create it
+#     usds=dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds")
+#     usds=usds[complete.cases(usds),]
+#     assign("usds",usds,envir=globalenv())     #assign to global environment for future use
+#   }
+#   getUpstream_worker=function(segid){
+#     usds=get("usds",envir=globalenv())
+#     
+#     recursionCount=get("recursionCount",envir=globalenv())
+#     recursionCount=recursionCount+1
+#     assign("recursionCount",recursionCount,envir=globalenv())
+#     
+#     upstream=usds[usds$ds_segid==segid,"us_segid"]
+#     upstream=c(upstream, sapply(upstream,FUN=getUpstream_worker))
+#     return(upstream)
+#   }
+#   return(unlist(getUpstream_worker(segid)))
+# }
+# ^^ faster^^ but c stack error - can fix here but what about in app?  Track how many recursion cycles?
+
+
+getUpstream_scLocation=function(scLocation){
+  closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
+                          FROM streamsegments LEFT JOIN locations ON ST_DISTANCE(streamSegments.geometry, locations.geometry) < 50
+                          WHERE locations.locationid = '", scLocation, "' 
+                          ORDER BY distance ASC 
+                          LIMIT 1;"))$segid
+  
+  upstreamSegs=getUpstream(closestSeg)
+  return(upstreamSegs)
+}
+# system.time({
+#   u=getUpstream_scLocation(147)
+# })

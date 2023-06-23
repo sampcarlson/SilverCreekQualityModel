@@ -1,9 +1,10 @@
 source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
 library(pbapply)
 dem=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem.tif")
-streamline=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/nhdFlowline_simplify.gpkg")
-scWshed=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/silverCreekWatershedExtent.gpkg")
+streamline=st_zm(st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/nhdFlowline_simplify.gpkg"))
+scWshed=st_zm(st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/silverCreekWatershedExtent.gpkg"))
 useFlowSink=T
+
 
 streamline=st_transform(streamline,crs=st_crs(dem))
 
@@ -15,7 +16,7 @@ dem[streamCells$cell]=dem[streamCells$cell]-10
 #All cells that are not NULL and not zero indicate depressions. Water will flow into but not out of depressions. 
 if(useFlowSink){
   flowSink=st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/flowSink.gpkg")
-  
+  flowSink=st_zm(flowSink)
   flowSinkRaster=dem*0
   
   addSinkCells=extract(flowSinkRaster,vect(flowSink),cells=T)
@@ -65,10 +66,10 @@ if(useFlowSink){
 ######## segment streamlines within sc watershed--------
 
 #lots of io time to do this in grass, but it works...
-scStreamline=st_intersection(st_zm(streamline),st_zm(scWshed))
+scStreamline=st_intersection(streamline,scWshed)
 write_VECT(vect(scStreamline),"streamline",flags="overwrite")
 execGRASS("v.split", input="streamline",output="streamSegs",length=50,units="meters",flags="overwrite")
-streamSegs=st_as_sf(read_VECT("streamSegs"))
+streamSegs=st_zm(st_as_sf(read_VECT("streamSegs")))
 
 #drop extra info from nhd, keep one id in cas it is useful in the future:
 streamSegs$segid=1:nrow(streamSegs)
@@ -106,15 +107,6 @@ dbExecute(conn(), "CREATE MATERIALIZED VIEW usds AS SELECT DISTINCT ON (us.segid
           LEFT JOIN streamsegments ds ON ST_INTERSECTS(ds.geometry, us.geometry) AND ds.segid != us.segid AND ds.uaa > us.uaa 
            ORDER BY us.segid, ds.uaa DESC;")
 
-
-
-dbGetQuery(conn(), "WITH RECURSIVE upstreamof(segid) AS (
-                        SELECT us_segid FROM usds WHERE ds_segid = '179'
-                      UNION ALL 
-                        SELECT u.us_segid FROM usds u 
-                        JOIN upstreamof ON u.ds_segid = upstreamof.segid
-                      )
-                    SELECT * FROM upstreamof;")
 
 
 # 

@@ -89,12 +89,12 @@ inSeason=function(date){
 temperatureData$inSeason=inSeason(temperatureData$date)
 temperatureData=temperatureData[temperatureData$inSeason,]
 
-temperatureParamDF=do.call(rbind,pbmapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,SIMPLIFY = F))
-temperatureParamDF=merge(temperatureParamDF,temperatureData)
-temperatureParamDF$doy=as.numeric(format.Date(temperatureParamDF$date,"%j"))
+#temperatureParamDF=do.call(rbind,pbmapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,SIMPLIFY = F))
+#temperatureParamDF=merge(temperatureParamDF,temperatureData)
+#temperatureParamDF$doy=as.numeric(format.Date(temperatureParamDF$date,"%j"))
 
-write.csv(temperatureParamDF,file=paste0(getwd(),"/temperatureParamaterSet_",Sys.Date(),".csv"))
-#temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-06-14.csv"))
+#write.csv(temperatureParamDF,file=paste0(getwd(),"/temperatureParamaterSet_",Sys.Date(),".csv"))
+temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-06-15.csv"))
 
 modelLocations=st_read(conn(),query=paste0("SELECT locationid, name, wshedareakm, metrics, locationgeometry FROM locationattributes WHERE locationid IN ('",
                                            paste(unique(temperatureParamDF$locationid), collapse="', '"),"');"))
