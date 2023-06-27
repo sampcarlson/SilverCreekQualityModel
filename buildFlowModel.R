@@ -5,7 +5,7 @@ flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
 #upstream locations:  144 is sportsmans, 147 is ragsdale just above sc-lw confluence, 148 is station 10 further down the little wood (richfield) 
 
-allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 148)
+allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 147)
 
 #n per day:
 dayN=aggregate(locationid~date, data=allFlowData, FUN=length)

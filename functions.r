@@ -5,6 +5,7 @@ library(sf)
 library(terra)
 library(fastmatch)
 library(data.table)
+library(parallel)
 
 conn=function(){    #checks for db connection object ('scdb') in global env, creates if necessary, returns and places in global enc
   
@@ -382,12 +383,24 @@ getFlowIndexData=function(flowIndexLocationID=144,upstreamOfLocationID=147){
   cores=max(1,parallel::detectCores()-2)
   clust=makeCluster(cores)
   
-  system.time({
-    r= parLapply(cl=clust,indexDates,calcDayIndex,flowDF=allFlowData,flowIndexLocationID=flowIndexLocationID)
-    indexedFlowData=do.call(rbind,r)
-  })
+  r= parLapply(cl=clust,indexDates,calcDayIndex,flowDF=allFlowData,flowIndexLocationID=flowIndexLocationID)
+  indexedFlowData=do.call(rbind,r)
+  
   
   stopCluster(clust)
+  
+  usds=getUsds()
+  headwaterSegments=usds$us_segid[!(usds$us_segid %fin% usds$ds_segid)]
+  
+  flowSites_tribCount=data.table(flowLocationID=unique(indexedFlowData$locationid))
+  
+  getHeadwaterCount=function(locationID,headwaters=headwaterSegments){
+    sum(headwaters %fin% getUpstream_scLocation(locationID))
+  }
+  flowSites_tribCount$tribCount=sapply(flowSites_tribCount$flowLocationID,getHeadwaterCount)
+  
+  indexedFlowData=merge(indexedFlowData,flowSites_tribCount,by.x="locationid",by.y="flowLocationID")
+
   
   return(indexedFlowData)
 }
@@ -408,6 +421,8 @@ distributeFlow=function(indexFlow,baseID,isSegID=F){# if not segID, assumed to b
   
   if(!exists("streamSegTable",where=globalenv())){      #stream segs table does not exist - create it
     streamSegTable=data.table(dbGetQuery(conn(),"SELECT segid, length, uaa FROM streamsegments;"))
+    s=streamSegTable[segid %fin% c(1,2),]
+    setkey(streamSegTable,segid)
     assign("streamSegTable",streamSegTable,envir=globalenv())     #assign to global environment for future use
   }
   streamSegTable=get("streamSegTable",envir=globalenv())
@@ -496,7 +511,11 @@ calcMeanResidence=function(ID=0,indexFlow=100,isSegID=F,useResidenceFunction=F){
   return(meanRes)
 }
 
+
+
 calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F){
+  
+  netDefs=getNetDefs()
   
   segDF$meanResidence=0
   
@@ -510,18 +529,14 @@ calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F){
   
   for(i in 1:nrow(segDF)){
     
-  
-    thisNetwork=segDF[segid %fin% getUpstream(segDF$segid[i])]
-
+    thisNetwork=segDF[segDF$segid %fin% netDefs$inNetSegID[netDefs$segid==segDF$segid[i]],]
+    
+    #thisNetwork=merge(netDefs[netDefs$segid==segDF$segid[i]],segDF,by.x="inNetSegID",by.y="segid",sort=F)
+    
+    
     #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
-    maxFlow=max(thisNetwork$flow)
-    #print(maxFlow)
-    meanRes=0
-    for(j in 1:nrow(thisNetwork)){
-      meanRes=meanRes+thisNetwork$residence[j]*thisNetwork$flow[j]/maxFlow
-    }
-    segDF$meanResidence[i]=meanRes
-
+    segDF$meanResidence[i]=sum(thisNetwork$residence*thisNetwork$flow/max(thisNetwork$flow))
+    
   }
   return(segDF)
   
@@ -545,45 +560,16 @@ calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F){
 #I like ^^^ this ^^^ one better, but the R implementation is faster - downloads the data only once
 
 
-
-# getUpstream=function(segid){
-#   recursionCount=0
-#   assign("recursionCount",recursionCount,envir=globalenv())
-#   if(!exists("usds",where=globalenv())){      #usds does not exist - create it
-#     usds=dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds")
-#     usds=usds[complete.cases(usds),]
-#     assign("usds",usds,envir=globalenv())     #assign to global environment for future use
-#   }
-#   getUpstream_worker=function(segid){
-#     usds=get("usds",envir=globalenv())
-# 
-#     recursionCount=get("recursionCount",envir=globalenv())
-#     recursionCount=recursionCount+1
-#     assign("recursionCount",recursionCount,envir=globalenv())
-# 
-#     upstream=usds[usds$ds_segid==segid,"us_segid"]
-#     upstream=c(upstream, sapply(upstream,FUN=getUpstream_worker))
-#     return(upstream)
-#   }
-#   return(unlist(getUpstream_worker(segid)))
-# }
-# ^^ fast^^, but c stack overflow error - can expand stack size here but what about app?
-
 getUpstream=function(segid){
-  if(!exists("usds",where=globalenv())){      #usds does not exist - create it
-    usds=data.table(dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds"))
-    usds=usds[complete.cases(usds),]
-    u=usds[usds$us_segid %fin% c(1,2),]
-    assign("usds",usds,envir=globalenv())     #assign to global environment for future use
-  }
-  usds=get("usds",envir=globalenv())
+  usds=getUsds()
   
   i=0
   networkSegs=segid
   thisSegs=segid
   while(length(thisSegs>=1)){
     
-    upSegs=usds[usds$ds_segid %fin% thisSegs,"us_segid"]
+    upSegs=usds$us_segid[usds$ds_segid %fin% thisSegs]
+    
     networkSegs=c(networkSegs,upSegs)
     thisSegs=upSegs
     i=i+1
@@ -613,5 +599,38 @@ getUpstream_scLocation=function(scLocation){
 # system.time({
 #   u=getUpstream_scLocation(147)
 # })
+getUsds=function(){
+  if(!exists("usds",where=globalenv())){      #usds does not exist - create it
+    usds=data.table(dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds"))
+    usds=usds[complete.cases(usds),]
+    u=usds[usds$us_segid %fin% c(1,2),]
+    setkey(usds, ds_segid)
+    assign("usds",usds,envir=globalenv())     #assign to global environment for future use
+  }
+  usds=get("usds",envir=globalenv())
+  return(usds)
+}
 
+
+getNetDefs=function(){
+  
+  if(!exists("netDefs",where=globalenv())){      #does not exist - create it
+    usds=getUsds()
+    netDefs=data.table(segid=integer(),inNetSegID=integer())
+    
+    for(ds_seg in unique(c(usds$us_segid,usds$ds_segid))){
+      thisUpstreamSegs=getUpstream(ds_seg)
+      netDefs=rbind(netDefs, data.table(segid=as.integer(ds_seg),inNetSegID=as.integer(thisUpstreamSegs)))
+    }
+    
+    setkey(netDefs,segid)
+    n=netDefs[netDefs$segid %fin% 2]  #initialize %fin% indexing or whatever it is
+    
+    assign("netDefs",netDefs,envir=globalenv())     #assign to global environment for future use
+  }
+  netDefs=get("netDefs",envir=globalenv())
+  
+  return(netDefs)
+}
+#format(object.size(netDefs),units="auto")
 

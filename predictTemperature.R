@@ -1,6 +1,6 @@
 #predict temperatures across silver creek
 source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
-library(data.table)
+
 
 
 flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")
@@ -14,10 +14,12 @@ baseStreamSeg=dbGetQuery(conn(),"SELECT segid FROM streamsegments ORDER BY uaa D
 
 thisIndexFlow=100
 
-
-streamSegAttributes=data.table(distributeFlow(thisIndexFlow,baseStreamSeg,isSegID=T))
-
+#distribute flow and residence from index flow
 Rprof(tmp <- tempfile())
-streamSegmentAttributes = calcMeanResidence_allSegs(streamSegAttributes)
+streamSegAttributes=data.table(distributeFlow(thisIndexFlow,baseStreamSeg,isSegID=T))
+setkey(streamSegAttributes,segid)
+streamSegAttributes = calcMeanResidence_allSegs(streamSegAttributes)
 Rprof()
 summaryRprof(tmp)
+
+
