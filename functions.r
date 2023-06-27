@@ -3,7 +3,8 @@ library(RColorBrewer)
 library(rgrass)
 library(sf)
 library(terra)
-library(parallel)
+library(fastmatch)
+library(data.table)
 
 conn=function(){    #checks for db connection object ('scdb') in global env, creates if necessary, returns and places in global enc
   
@@ -403,24 +404,46 @@ getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
 }
 
 
-distributeFlow=function(indexFlow,baseID,isSegID=F,flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")){# if not segID, assumed to be location id
+distributeFlow=function(indexFlow,baseID,isSegID=F){# if not segID, assumed to be location id
+  
+  if(!exists("streamSegTable",where=globalenv())){      #stream segs table does not exist - create it
+    streamSegTable=data.table(dbGetQuery(conn(),"SELECT segid, length, uaa FROM streamsegments;"))
+    assign("streamSegTable",streamSegTable,envir=globalenv())     #assign to global environment for future use
+  }
+  streamSegTable=get("streamSegTable",envir=globalenv())
+  
+  if(!exists("flowModel",where=globalenv())){      #flow model does not exist - get it
+    flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")
+    assign("flowModel",flowModel,envir=globalenv())     #assign to global environment for future use
+  }
+  flowModel=get("flowModel",envir=globalenv())
+  
   if(length(indexFlow)!=1){
     stop("indexFlow must be single value")
   }
   
   if(isSegID){
-    streamSegs=getUpstream(baseID)
+    streamSegIDs=getUpstream(baseID)
   } else {
-    streamSegs=getUpstream_scLocation(baseID)
+    streamSegIDs=getUpstream_scLocation(baseID)
   }
-  streamSegs
   
-  streamSegs=st_read(conn(),query=paste0("SELECT * from streamsegments WHERE st_intersects(streamsegments.geometry,
-                                              (SELECT geometry FROM watersheds WHERE outflowlocationid = '",outflowLocationID,"')
-                                           );"))
+  streamSegs=streamSegTable[streamSegTable$segid %fin% streamSegIDs,]
+  
+  #fmatch(streamSegIDs,streamSegTable$segid)
+  
+  # system.time({
+  #   streamSegs=dbGetQuery(conn(),paste0("SELECT * FROM streamsegments WHERE segid IN ('",paste(streamSegIDs, collapse="', '"),"');"))
+  # })
+  # 
+  # system.time({
+  #   streamSegs=st_read(conn(),query=paste0("SELECT * from streamsegments WHERE st_intersects(streamsegments.geometry,
+  #                                             (SELECT geometry FROM watersheds WHERE outflowlocationid = '",baseID,"')
+  #                                          );"))
+  # })
   #minor issue:
-  #figure out hos to use st_intersection instead to get the portion of segments within the watershed.  
-  #currently headwater points heg inflated residence values as whole segments are returned.
+  #Would be best get the portion of segments within the watershed.  
+  #currently headwater points have inflated residence values as whole segments are returned.
   
   
   if(nrow(streamSegs)==0){
@@ -440,8 +463,15 @@ distributeFlow=function(indexFlow,baseID,isSegID=F,flowModel=readRDS("~/Dropbox/
 }
 
 
-calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunction=F,meanIndexFlow=140){
-  flowSegs=distributeFlow(indexFlow=indexFlow,outflowLocationID=outflowLocationID)
+calcMeanResidence=function(ID=0,indexFlow=100,isSegID=F,useResidenceFunction=F){
+  
+  if(isSegID){
+    flowSegs=distributeFlow(indexFlow=indexFlow,baseID=ID, isSegID=T)
+  } else {
+    flowSegs=distributeFlow(indexFlow=indexFlow,baseID=ID)
+  }
+  
+  
   
   if(nrow(flowSegs)==0){
     return(NA)
@@ -466,18 +496,48 @@ calcMeanResidence=function(indexFlow=100,outflowLocationID=147,useResidenceFunct
   return(meanRes)
 }
 
+calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F){
+  
+  segDF$meanResidence=0
+  
+  if(useResidenceFunction){
+    #need segment wise width or depth, or other information to estimate velocity
+    break("residence function not defined")
+  } else {
+    #print("using length as unit of residence")
+    segDF$residence=segDF$length
+  }
+  
+  for(i in 1:nrow(segDF)){
+    
+  
+    thisNetwork=segDF[segid %fin% getUpstream(segDF$segid[i])]
 
-getUpstream=function(segid){
-  us=dbGetQuery(conn(), paste0("WITH RECURSIVE upstreamof(segid) AS (
-                          SELECT us_segid FROM usds WHERE ds_segid = '",segid,"'
-                      UNION ALL
-                          SELECT u.us_segid FROM usds u
-                          JOIN upstreamof ON u.ds_segid = upstreamof.segid
-                      )
-                      SELECT * FROM upstreamof;"))
-  us=rbind(us, data.frame(segid=segid))
-  return(us)
+    #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
+    maxFlow=max(thisNetwork$flow)
+    #print(maxFlow)
+    meanRes=0
+    for(j in 1:nrow(thisNetwork)){
+      meanRes=meanRes+thisNetwork$residence[j]*thisNetwork$flow[j]/maxFlow
+    }
+    segDF$meanResidence[i]=meanRes
+
+  }
+  return(segDF)
+  
 }
+
+# getUpstream=function(segid){
+#   us=dbGetQuery(conn(), paste0("WITH RECURSIVE upstreamof(segid) AS (
+#                           SELECT us_segid FROM usds WHERE ds_segid = '",segid,"'
+#                       UNION ALL
+#                           SELECT u.us_segid FROM usds u
+#                           JOIN upstreamof ON u.ds_segid = upstreamof.segid
+#                       )
+#                       SELECT * FROM upstreamof;"))
+#   us=rbind(us, data.frame(segid=segid))
+#   return(us)
+# }
 
 # system.time({
 #   u=getUpstream(358)
@@ -496,19 +556,49 @@ getUpstream=function(segid){
 #   }
 #   getUpstream_worker=function(segid){
 #     usds=get("usds",envir=globalenv())
-#     
+# 
 #     recursionCount=get("recursionCount",envir=globalenv())
 #     recursionCount=recursionCount+1
 #     assign("recursionCount",recursionCount,envir=globalenv())
-#     
+# 
 #     upstream=usds[usds$ds_segid==segid,"us_segid"]
 #     upstream=c(upstream, sapply(upstream,FUN=getUpstream_worker))
 #     return(upstream)
 #   }
 #   return(unlist(getUpstream_worker(segid)))
 # }
-# ^^ faster^^ but c stack error - can fix here but what about in app?  Track how many recursion cycles?
+# ^^ fast^^, but c stack overflow error - can expand stack size here but what about app?
 
+getUpstream=function(segid){
+  if(!exists("usds",where=globalenv())){      #usds does not exist - create it
+    usds=data.table(dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds"))
+    usds=usds[complete.cases(usds),]
+    u=usds[usds$us_segid %fin% c(1,2),]
+    assign("usds",usds,envir=globalenv())     #assign to global environment for future use
+  }
+  usds=get("usds",envir=globalenv())
+  
+  i=0
+  networkSegs=segid
+  thisSegs=segid
+  while(length(thisSegs>=1)){
+    
+    upSegs=usds[usds$ds_segid %fin% thisSegs,"us_segid"]
+    networkSegs=c(networkSegs,upSegs)
+    thisSegs=upSegs
+    i=i+1
+    if(i>10000){
+      break(paste0("Network trace iterations exceeds ", i,", breaking" ))
+    }
+    
+  }
+  return(networkSegs)
+}
+# ^^even faster^^, no stack overflow
+
+# system.time({
+#   u=getUpstream(2084)
+# })
 
 getUpstream_scLocation=function(scLocation){
   closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
@@ -523,3 +613,5 @@ getUpstream_scLocation=function(scLocation){
 # system.time({
 #   u=getUpstream_scLocation(147)
 # })
+
+
