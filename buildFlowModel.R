@@ -7,6 +7,8 @@ flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
 allFlowData=getFlowIndexData(flowIndexLocationID = flowIndexLocationID, upstreamOfLocationID = 147)
 
+
+
 #n per day:
 dayN=aggregate(locationid~date, data=allFlowData, FUN=length)
 sum(dayN$locationid>=8)
@@ -27,22 +29,47 @@ flow=flow[inSeason(flow$date),]
 
 plot(flow$flowIndex~flow$indexFlow)
 plot(flow$flowIndex~flow$uaa)
+plot(flow$flowIndex~flow$tribCount)
 
+# flowModel=lm(flowIndex~tribCount+uaa+indexFlow,data=flow)
+# summary(flowModel)
+# AIC(flowModel)
+# 
+# flowModel=lm(flowIndex~poly(tribCount,2)+uaa+indexFlow,data=flow)
+# summary(flowModel)
+# AIC(flowModel)
+# 
+# flowModel=lm(flowIndex~tribCount+uaa*indexFlow,data=flow)
+# summary(flowModel)
+# AIC(flowModel)
+# 
+# flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=flow)
+# summary(flowModel)
+# AIC(flowModel)
+# 
+# flowModel=lm(flowIndex~tribCount + poly(uaa,2) + indexFlow,data=flow)
+# summary(flowModel)
+# AIC(flowModel)
 
-flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=flow)
+flowModel=lm(flowIndex~tribCount + poly(uaa,2)*indexFlow,data=flow)
 summary(flowModel)
-sigma(flowModel)
+AIC(flowModel)
 
-# model fit limited to best data days:
-bestDataDays=dayN$date[dayN$locationid>=10]
-rich_flow=flow[flow$date %in% bestDataDays,]
-rich_flowModel=lm(flowIndex~poly(uaa,2)*indexFlow,data=rich_flow)
-summary(rich_flowModel)
-sigma(rich_flowModel)
 
-plot(flow$flowIndex[flow$date %in% bestDataDays]~flow$uaa[flow$date %in% bestDataDays])
-lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100))~c(0:2050))
-lines(predict(rich_flowModel,data.frame(uaa=0:2050,indexFlow=100))~c(0:2050),lty=2)
+
+# # model fit limited to best data days:
+# bestDataDays=dayN$date[dayN$locationid>=10]
+# rich_flow=flow[flow$date %in% bestDataDays,]
+# rich_flowModel=lm(flowIndex~tribCount+poly(uaa,2)*indexFlow,data=rich_flow)
+# summary(rich_flowModel)
+# sigma(rich_flowModel)
+
+plot(flow$flowIndex~flow$uaa)
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100,tribCount=1))~c(0:2050))
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100,tribCount=10))~c(0:2050))
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100,tribCount=20))~c(0:2050))
+lines(predict(flowModel,data.frame(uaa=0:2050,indexFlow=100,tribCount=30))~c(0:2050))
+
 
 
 
@@ -50,7 +77,6 @@ saveRDS(flowModel,file="~/Dropbox/SilverCreek/flowModel.rds")
 
 
 
-plot(distributeFlow(indexFlow=100)[,"flow"])
 
 
 #examine model performance:

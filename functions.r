@@ -386,27 +386,20 @@ getFlowIndexData=function(flowIndexLocationID=144,upstreamOfLocationID=147){
   r= parLapply(cl=clust,indexDates,calcDayIndex,flowDF=allFlowData,flowIndexLocationID=flowIndexLocationID)
   indexedFlowData=do.call(rbind,r)
   
-  
   stopCluster(clust)
-  
-  usds=getUsds()
-  headwaterSegments=usds$us_segid[!(usds$us_segid %fin% usds$ds_segid)]
   
   flowSites_tribCount=data.table(flowLocationID=unique(indexedFlowData$locationid))
   
-  getHeadwaterCount=function(locationID,headwaters=headwaterSegments){
-    sum(headwaters %fin% getUpstream_scLocation(locationID))
-  }
-  flowSites_tribCount$tribCount=sapply(flowSites_tribCount$flowLocationID,getHeadwaterCount)
+  flowSites_tribCount$tribCount=countTribs(locationIDs=flowSites_tribCount$flowLocationID)
   
   indexedFlowData=merge(indexedFlowData,flowSites_tribCount,by.x="locationid",by.y="flowLocationID")
-
+  
   
   return(indexedFlowData)
 }
 
 
-getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
+getFlowByDate=function(startDate,endDate=NULL, flowData=getAllFlowData() ){
   startDate=as.Date(startDate)
   if(is.null(endDate)){
     endDate=startDate
@@ -416,22 +409,26 @@ getFlowByDate=function(startDate,endDate=NULL,flowData=allFlowData){
   return(flowData)
 }
 
+countTribs=function(locationIDs = NULL, segIDs= NULL, usds=getUsds()){
+  headwaterSegments=usds$us_segid[!(usds$us_segid %fin% usds$ds_segid)]
+  
+  if(!is.null(locationIDs)){ #if location ids provided
+    countTribs_worker=function(locationID,headwaters=headwaterSegments){
+      sum(headwaters %fin% getUpstream_scLocation(locationID))
+    }
+    ids=locationIDs
+  }
+  if(!is.null(segIDs)){ #if seg ids provided
+    countTribs_worker=function(segIDs,headwaters=headwaterSegments){
+      sum(headwaters %fin% getUpstream(segIDs))
+    }
+    ids=segIDs
+  }
+  sapply(ids,countTribs_worker)
+}
 
-distributeFlow=function(indexFlow,baseID,isSegID=F){# if not segID, assumed to be location id
-  
-  if(!exists("streamSegTable",where=globalenv())){      #stream segs table does not exist - create it
-    streamSegTable=data.table(dbGetQuery(conn(),"SELECT segid, length, uaa FROM streamsegments;"))
-    s=streamSegTable[segid %fin% c(1,2),]
-    setkey(streamSegTable,segid)
-    assign("streamSegTable",streamSegTable,envir=globalenv())     #assign to global environment for future use
-  }
-  streamSegTable=get("streamSegTable",envir=globalenv())
-  
-  if(!exists("flowModel",where=globalenv())){      #flow model does not exist - get it
-    flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")
-    assign("flowModel",flowModel,envir=globalenv())     #assign to global environment for future use
-  }
-  flowModel=get("flowModel",envir=globalenv())
+
+distributeFlow=function(indexFlow,baseID,isSegID=F,streamSegTable=getStreamSegTable() ){# if not segID, assumed to be location id
   
   if(length(indexFlow)!=1){
     stop("indexFlow must be single value")
@@ -444,6 +441,7 @@ distributeFlow=function(indexFlow,baseID,isSegID=F){# if not segID, assumed to b
   }
   
   streamSegs=streamSegTable[streamSegTable$segid %fin% streamSegIDs,]
+  streamSegs=merge(streamSegs,tribCount_segs,by="segid")
   
   #fmatch(streamSegIDs,streamSegTable$segid)
   
@@ -486,8 +484,6 @@ calcMeanResidence=function(ID=0,indexFlow=100,isSegID=F,useResidenceFunction=F){
     flowSegs=distributeFlow(indexFlow=indexFlow,baseID=ID)
   }
   
-  
-  
   if(nrow(flowSegs)==0){
     return(NA)
   }
@@ -501,21 +497,21 @@ calcMeanResidence=function(ID=0,indexFlow=100,isSegID=F,useResidenceFunction=F){
   }
   
   #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
-  #note that max(Qs) is just outflow Q
-  maxFlow=max(flowSegs$flow)
-  #print(maxFlow)
-  meanRes=0
-  for(i in 1:nrow(flowSegs)){
-    meanRes=meanRes+flowSegs$residence[i]*flowSegs$flow[i]/maxFlow
-  }
+  
+  # maxFlow=max(flowSegs$flow)
+  # #print(maxFlow)
+  # meanRes=0
+  # for(i in 1:nrow(flowSegs)){
+  #   meanRes=meanRes+flowSegs$residence[i]*flowSegs$flow[i]/maxFlow
+  # }
+  
+  meanRes=sum(flowSegs$residence*flowSegs$flow/max(flowSegs$flow))
   return(meanRes)
 }
 
 
 
-calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F){
-  
-  netDefs=getNetDefs()
+calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F,netDefs=getNetDefs() ){
   
   segDF$meanResidence=0
   
@@ -560,8 +556,7 @@ calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F){
 #I like ^^^ this ^^^ one better, but the R implementation is faster - downloads the data only once
 
 
-getUpstream=function(segid){
-  usds=getUsds()
+getUpstream=function(segid,usds=getUsds() ){
   
   i=0
   networkSegs=segid
@@ -586,12 +581,14 @@ getUpstream=function(segid){
 #   u=getUpstream(2084)
 # })
 
-getUpstream_scLocation=function(scLocation){
-  closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
-                          FROM streamsegments LEFT JOIN locations ON ST_DISTANCE(streamSegments.geometry, locations.geometry) < 50
-                          WHERE locations.locationid = '", scLocation, "' 
-                          ORDER BY distance ASC 
-                          LIMIT 1;"))$segid
+getUpstream_scLocation=function(scLocation,closestSegs_scLocations=getClosestSegs_scLocations()){
+  # closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
+  #                         FROM streamsegments LEFT JOIN locations ON ST_DISTANCE(streamSegments.geometry, locations.geometry) < 50
+  #                         WHERE locations.locationid = '", scLocation, "' 
+  #                         ORDER BY distance ASC 
+  #                         LIMIT 1;"))$segid
+  
+  closestSeg=closestSegs_scLocations[closestSegs_scLocations$locationid==scLocation,]$closestSeg
   
   upstreamSegs=getUpstream(closestSeg)
   return(upstreamSegs)
@@ -600,37 +597,145 @@ getUpstream_scLocation=function(scLocation){
 #   u=getUpstream_scLocation(147)
 # })
 getUsds=function(){
-  if(!exists("usds",where=globalenv())){      #usds does not exist - create it
-    usds=data.table(dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds"))
-    usds=usds[complete.cases(usds),]
-    u=usds[usds$us_segid %fin% c(1,2),]
-    setkey(usds, ds_segid)
-    assign("usds",usds,envir=globalenv())     #assign to global environment for future use
+  if(!exists("global_usds",where=globalenv())){      #usds does not exist - create it
+    global_usds=data.table(dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds"))
+    global_usds=global_usds[complete.cases(global_usds),]
+    u=global_usds[global_usds$us_segid %fin% c(1,2),]
+    setkey(global_usds, ds_segid)
+    
+    assign("global_usds",global_usds,envir=globalenv())     #assign to global environment for future use
   }
-  usds=get("usds",envir=globalenv())
-  return(usds)
+  global_usds=get("global_usds",envir=globalenv())
+  return(invisible(global_usds))
+  #print("global_usds -> globalenv()")
 }
 
 
-getNetDefs=function(){
-  
-  if(!exists("netDefs",where=globalenv())){      #does not exist - create it
-    usds=getUsds()
-    netDefs=data.table(segid=integer(),inNetSegID=integer())
+getNetDefs=function(usds=getUsds() ){
+  if(!exists("global_netDefs",where=globalenv())){      #does not exist - create it
+    global_netDefs=data.table(segid=integer(),inNetSegID=integer())
     
     for(ds_seg in unique(c(usds$us_segid,usds$ds_segid))){
       thisUpstreamSegs=getUpstream(ds_seg)
-      netDefs=rbind(netDefs, data.table(segid=as.integer(ds_seg),inNetSegID=as.integer(thisUpstreamSegs)))
+      global_netDefs=rbind(global_netDefs, data.table(segid=as.integer(ds_seg),inNetSegID=as.integer(thisUpstreamSegs)))
     }
     
-    setkey(netDefs,segid)
-    n=netDefs[netDefs$segid %fin% 2]  #initialize %fin% indexing or whatever it is
+    setkey(global_netDefs,segid)
+    n=global_netDefs[global_netDefs$segid %fin% 2]  #initialize %fin% indexing or whatever it is
     
-    assign("netDefs",netDefs,envir=globalenv())     #assign to global environment for future use
+    assign("global_netDefs",global_netDefs,envir=globalenv())     #assign to global environment for future use
   }
-  netDefs=get("netDefs",envir=globalenv())
-  
-  return(netDefs)
+  global_netDefs=get("global_netDefs",envir=globalenv())
+  return(invisible(global_netDefs))
+  #print("global_netDefs -> globalenv()")
+}
+
+getAllFlowData=function(){
+  if(!exists("global_allFlowData",where=globalenv())){      #does not exist - create it
+    global_allFlowData=data.table(dbGetQuery(conn(), "SELECT AVG(value) as FLOW, locationid, datetime::date FROM data WHERE metric = 'flow' GROUP BY locationid, datetime::date;") )
+    f=global_allFlowData[global_allFlowData$locationid %fin% c(1,2),]
+    setkey(global_allFlowData, locationid)
+    
+    assign("global_allFlowData",global_allFlowData,envir=globalenv())     #assign to global environment for future use
+  }
+  global_allFlowData=get("global_allFlowData",envir=globalenv())
+  return(invisible(global_allFlowData))
+  #print("global_allFlowData -> globalenv()")
+}
+
+getLocationAttributeTable=function(){
+  if(!exists("global_locationAttributeTable",where=globalenv())){      #does not exist - create it
+    global_locationAttributeTable=data.table(dbGetQuery(conn(), "SELECT locationid, name, metrics, wshedareakm FROM locationattributes;") )
+    global_locationAttributeTable$tribCount=countTribs(locationIDs=global_locationAttributeTable$locationid)
+    
+    assign("global_locationAttributeTable",global_locationAttributeTable,envir=globalenv())     #assign to global environment for future use
+  } 
+  global_locationAttributeTable=get("global_locationAttributeTable",envir = globalenv())
+  #print("global_locationAttributeTable -> globalenv()")
+  return(invisible(global_locationAttributeTable))
 }
 #format(object.size(netDefs),units="auto")
 
+getAirTempData=function(airTempReferenceLocation=180){
+  if(!exists("global_airTempData",where=globalenv())){      #does not exist - create it
+    #print("building airTempData")
+    global_airTempData=data.table(dbGetQuery(conn(), paste0(
+      "SELECT MAX(value) AS daymax, AVG(value) AS daymean, datetime::date FROM data 
+      WHERE metric = 'air temperature' AND locationid = '",airTempReferenceLocation,"'
+      GROUP BY datetime::date;"
+    )))
+    global_airTempData=global_airTempData[complete.cases(global_airTempData),]
+    
+    assign("global_airTempData",global_airTempData,envir=globalenv())     #assign to global environment for future use
+  } 
+  global_airTempData=get("global_airTempData",envir = globalenv())
+  #return(global_airTempData)
+  #print("global_airTempData -> globalenv()")
+  return(invisible(global_airTempData))
+}
+
+getStreamSegTable=function(){
+  if(!exists("global_streamSegTable",where=globalenv())){      #stream segs table does not exist - create it
+    global_streamSegTable=data.table(dbGetQuery(conn(),"SELECT segid, length, uaa FROM streamsegments;"))
+    s=global_streamSegTable[segid %fin% c(1,2),]
+    setkey(global_streamSegTable,segid)
+    
+    assign("global_streamSegTable",global_streamSegTable,envir=globalenv())     #assign to global environment for future use
+  }
+  global_streamSegTable=get("global_streamSegTable",envir=globalenv())
+  #print("global_streamSegTable -> globalenv()")
+  return(invisible(global_streamSegTable))
+}
+
+getFlowModel=function(){
+  if(!exists("global_flowModel",where=globalenv())){      #flow model does not exist - get it
+    global_flowModel=readRDS("~/Dropbox/SilverCreek/flowModel.rds")
+    
+    assign("global_flowModel",global_flowModel,envir=globalenv())     #assign to global environment for future use
+  }
+  global_flowModel=get("global_flowModel",envir=globalenv())
+  #print("global_flowModel -> globalenv()")
+  return(invisible(global_flowModel))
+}
+
+getTribCount_segs=function(){
+  if(!exists("global_tribCount_segs",where=globalenv())){
+    global_tribCount_segs=data.frame(segid= dbGetQuery(conn(),"SELECT DISTINCT segid FROM streamsegments")$segid)
+    global_tribCount_segs$tribCount=countTribs(segIDs = global_tribCount_segs$segid)
+    
+    assign("global_tribCount_segs",global_tribCount_segs,envir = globalenv())
+  }
+  global_tribCount_segs=get("global_tribCount_segs",envir = globalenv())
+  #print("global_tribCount_segs -> globalenv()")
+  return(invisible(global_tribCount_segs))
+}
+
+getClosestSegs_scLocations=function(scBaseID=147){
+  if(!exists("global_closestSegs_scLocations",where=globalenv())){
+    global_closestSegs_scLocations=data.frame(locationID=dbGetQuery(conn(),paste0("SELECT locations.locationid FROM locations WHERE ST_WITHIN(locations.geometry, (SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid = '",scBaseID,"'));")))
+  
+  matchToSeg=function(scLocation){
+    closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
+                          FROM streamsegments LEFT JOIN locations ON ST_DISTANCE(streamSegments.geometry, locations.geometry) < 50
+                          WHERE locations.locationid = '", scLocation, "' 
+                          ORDER BY distance ASC 
+                          LIMIT 1;"))$segid
+    return(closestSeg)
+  }
+  global_closestSegs_scLocations$closestSeg=sapply(scLocations$locationid,matchToSeg)
+  assign("global_closestSegs_scLocations",global_closestSegs_scLocations,envir=globalenv())
+  }
+  global_closestSegs_scLocations=get("global_closestSegs_scLocations",envir = globalenv())
+  return(invisible(global_closestSegs_scLocations))
+}
+
+preFabData=list(global_usds=getUsds(),
+                global_netDefs=getNetDefs(),
+                global_allFlowData=getAllFlowData(),
+                global_locationAttributeTable=getLocationAttributeTable(),
+                global_airTempData=getAirTempData(),
+                global_streamSegTable=getStreamSegTable(),
+                global_flowModel=getFlowModel(),
+                global_tribCount_segs=getTribCount_segs(),
+                global_closestSegs_scLocations=getClosestSegs_scLocations()
+)

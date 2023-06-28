@@ -23,18 +23,26 @@ flowIndexLocationID=144  ###### everything is relative to flow at sportsmans
 
 
 
-getTemperatureModelParameters=function(locationID,date,flowModel=readRDS(file="~/Dropbox/SilverCreek/flowModel.rds"),airTempReferenceLocation=180,airTempPeriodDays=1){
+getTemperatureModelParameters=function(locationID,date,flowIndexLocationID=144,airTempReferenceLocation=180,airTempPeriodDays=1,preFabList=preFabData){
   
+  list2env(preFabList,envir = globalenv())
+  flowModel=getFlowModel()
+  allFlowData=getAllFlowData()
+  locationAttributeTable=getLocationAttributeTable()
+  airTempData=getAirTempData()
   #print(paste("l:",locationID,"d:",date))
-  
   date=as.Date(date)
   
-  indexFlow=dbGetQuery(conn(),paste0("SELECT AVG(value) AS flow FROM data WHERE locationid = '",flowIndexLocationID,
-                                     "' AND datetime::date = '",date,"' AND metric = 'flow';"))$flow
+  #indexFlow=dbGetQuery(conn(),paste0("SELECT AVG(value) AS flow FROM data WHERE locationid = '",flowIndexLocationID,
+  #                                   "' AND datetime::date = '",date,"' AND metric = 'flow';"))$flow
+  indexFlow=allFlowData[locationid == flowIndexLocationID][datetime == date]$flow
   
-  uaa=dbGetQuery(conn(),paste0("SELECT wshedareakm AS uaa FROM locationattributes WHERE locationid = '",locationID,"';"))$uaa
+  #uaa=dbGetQuery(conn(),paste0("SELECT wshedareakm AS uaa FROM locationattributes WHERE locationid = '",locationID,"';"))$uaa
+  uaa=locationAttributeTable[locationid == locationID]$wshedareakm
+  tribCount=locationAttributeTable[locationid == locationID]$tribCount
   
-  flow=predict(flowModel,newdata=data.frame(indexFlow=indexFlow,uaa=uaa))*indexFlow
+  
+  flow=predict(flowModel,newdata=data.frame(indexFlow=indexFlow,uaa=uaa,tribCount=tribCount))*indexFlow
   
   
   resid=calcMeanResidence(ID=locationID,indexFlow=indexFlow,isSegID=F,useResidenceFunction = F)
@@ -48,23 +56,29 @@ getTemperatureModelParameters=function(locationID,date,flowModel=readRDS(file="~
   # )$avg
   # 
   # ^this is unnecessary as there is only one reliable station nearby (at Picabo)
-  #get 5 day window past air temp at picabo
-  airTemps=dbGetQuery(conn(),paste0("SELECT MAX(value), AVG(value) FROM data WHERE data.metric = 'air temperature' AND data.datetime::date > '",date-airTempPeriodDays,"' AND data.datetime::date <='",date,"'
-                            AND data.locationid = '",airTempReferenceLocation,"';") )
+  #get n day window past air temp at picabo
+  
+
+  airTemps=airTempData[(airTempData$datetime>date-airTempPeriodDays & airTempData$datetime <= date ),]
+  
+  # airTemps=dbGetQuery(conn(),paste0("SELECT MAX(value), AVG(value) FROM data WHERE data.metric = 'air temperature' AND data.datetime::date > '",date-airTempPeriodDays,"' AND data.datetime::date <='",date,"'
+  #                           AND data.locationid = '",airTempReferenceLocation,"';") )
+  
+  
   fToC=function(f){
     c = 5/9*(f - 32)
     return(c)
   }
   
-  maxAirTemp=fToC(airTemps$max)
-  meanAirTemp=fToC(airTemps$avg)
+  maxAirTemp=fToC(airTemps$daymax)
+  meanAirTemp=fToC(airTemps$daymean)
   
-  return(data.frame(locationid=locationID,date=date,flow=flow,residence=resid,meanAirTemp=meanAirTemp,maxAirTemp=maxAirTemp))
+  return(data.table(locationid=locationID,date=date,flow=flow,tribCount=tribCount,residence=resid,meanAirTemp=meanAirTemp,maxAirTemp=maxAirTemp))
 }
 
 
-tempModelBaseLocationID=148
-dbGetQuery(conn(), "SELECT locationid, name, metrics, wshedareakm FROM locationattributes WHERE locationid = '148';")
+tempModelBaseLocationID=147
+dbGetQuery(conn(), "SELECT locationid, name, metrics, wshedareakm FROM locationattributes WHERE locationid = '147';")
 #aggregate by day - no need for multiple models per day
 
 
@@ -77,9 +91,10 @@ temperatureData=dbGetQuery(conn(),paste0("SELECT AVG(data.value) AS meantemp, MA
 dbGetQuery(conn(),"SELECT * FROM locations WHERE locationid = 63;")
 temperatureData=temperatureData[!temperatureData$locationid == 63,]
 
+
 #time per location*date
 system.time(
-  getTemperatureModelParameters(3,"2021-07-01")
+  getTemperatureModelParameters(2,"2021-07-01",preFabList=preFabData)
 )
 
 inSeason=function(date){
@@ -91,19 +106,34 @@ temperatureData$inSeason=inSeason(temperatureData$date)
 temperatureData=temperatureData[temperatureData$inSeason,]
 
 #temperatureParamDF=do.call(rbind,pbmapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,SIMPLIFY = F))
-#temperatureParamDF=merge(temperatureParamDF,temperatureData)
-#temperatureParamDF$doy=as.numeric(format.Date(temperatureParamDF$date,"%j"))
 
-#write.csv(temperatureParamDF,file=paste0(getwd(),"/temperatureParamaterSet_",Sys.Date(),".csv"))
-temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-06-15.csv"))
+#single threadprocess:
+#tempParamList = pbmapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,MoreArgs = list(preFabList=preFabData), SIMPLIFY = F)
+
+#multi thread process:
+cores=max(1,parallel::detectCores()-2)
+
+tempParamList= mcmapply(getTemperatureModelParameters,locationID=temperatureData$locationid,date=temperatureData$date,
+                        MoreArgs = list(preFabList=preFabData),SIMPLIFY = F,mc.cores = cores )
+temperatureParamDF=do.call(rbind,tempParamList)
+rm(tempParamList)
+
+temperatureParamDF=merge(temperatureParamDF,temperatureData)
+temperatureParamDF$doy=as.numeric(format.Date(temperatureParamDF$date,"%j"))
+
+write.csv(temperatureParamDF,file=paste0(getwd(),"/temperatureParamaterSet_",Sys.Date(),".csv"))
+
+#temperatureParamDF=read.csv(paste0(getwd(),"/temperatureParamaterSet_2023-06-28.csv"))
+
+
 
 modelLocations=st_read(conn(),query=paste0("SELECT locationid, name, wshedareakm, metrics, locationgeometry FROM locationattributes WHERE locationid IN ('",
                                            paste(unique(temperatureParamDF$locationid), collapse="', '"),"');"))
-temperatureParamDF=merge(temperatureParamDF,data.frame(locationid=modelLocations$locationid,wshedArea=modelLocations$wshedareakm))
+temperatureParamDF=merge(temperatureParamDF,data.frame(locationid=modelLocations$locationid,wshedArea=modelLocations$wshedareakm),by="locationid")
 temperatureParamDF$date=as.Date(temperatureParamDF$date)
 
 maxSunAngleFun=function(doy){
- 43+23.45*sin((2*pi/360)*(360/365)*(doy-81))
+  43+23.45*sin((2*pi/360)*(360/365)*(doy-81))
 }
 
 temperatureParamDF$maxSunElevation=maxSunAngleFun(temperatureParamDF$doy)
