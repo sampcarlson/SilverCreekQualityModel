@@ -428,7 +428,7 @@ countTribs=function(locationIDs = NULL, segIDs= NULL, usds=getUsds()){
 }
 
 
-distributeFlow=function(indexFlow,baseID,isSegID=F,streamSegTable=getStreamSegTable() ){# if not segID, assumed to be location id
+distributeFlow=function(indexFlow,baseID,isSegID=F,streamSegTable=getStreamSegTable(), tribCount_segs=getTribCount_segs() ){# if not segID, assumed to be location id
   
   if(length(indexFlow)!=1){
     stop("indexFlow must be single value")
@@ -464,7 +464,7 @@ distributeFlow=function(indexFlow,baseID,isSegID=F,streamSegTable=getStreamSegTa
   }
   streamSegs$indexFlow=indexFlow
   streamSegs$flowIndex=predict(flowModel,streamSegs)
-  streamSegs$flow=streamSegs$indexFlow*streamSegs$flowIndex
+  streamSegs$flow=pmax(0,streamSegs$indexFlow*streamSegs$flowIndex)
   
   #map plot
   #plot(streamSegs[,"flow"])
@@ -505,6 +505,9 @@ calcMeanResidence=function(ID=0,indexFlow=100,isSegID=F,useResidenceFunction=F){
   #   meanRes=meanRes+flowSegs$residence[i]*flowSegs$flow[i]/maxFlow
   # }
   
+  # all water goes through  any segs w/ more water than the outflow
+  flowSegs$flow=pmin(flowSegs$flow,flowSegs$flow[flowSegs$uaa == max(flowSegs$uaa)])
+  
   meanRes=sum(flowSegs$residence*flowSegs$flow/max(flowSegs$flow))
   return(meanRes)
 }
@@ -520,21 +523,57 @@ calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F,ne
     break("residence function not defined")
   } else {
     #print("using length as unit of residence")
-    segDF$residence=segDF$length
+    segDF$thisResidence=segDF$length
+  }
+  
+  for(i in 1:nrow(segDF)){
+    
+    thisNetwork=segDF[segDF$segid %fin% netDefs$inNetSegID[netDefs$segid==segDF$segid[i]],]
+    #thisNetwork=merge(netDefs[netDefs$segid==segDF$segid[i]],segDF,by.x="inNetSegID",by.y="segid",sort=F)
+    
+    
+    # all water goes through  any segs w/ more water than the outflow
+    thisNetwork$flow=pmin(thisNetwork$flow,segDF$flow[i])
+    #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
+    segDF$meanResidence[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
+    
+  }
+  return(segDF)
+  
+}
+
+calcMeanResidenceForFlow=function(indexFlow,baseStreamSeg,useResidenceFunction=F,minFlow=0,netDefs=getNetDefs() ){
+  
+  segDF=data.table(distributeFlow(indexFlow,baseStreamSeg,isSegID=T))
+  segDF$flow=pmax(minFlow,segDF$flow)
+  segDF$meanResidenceToSeg=0
+  setkey(segDF,segid)
+  if(useResidenceFunction){
+    #need segment wise width or depth, or other information to estimate velocity
+    break("residence function not defined")
+  } else {
+    #print("using length as unit of residence")
+    segDF$thisResidence=segDF$length
   }
   
   for(i in 1:nrow(segDF)){
     
     thisNetwork=segDF[segDF$segid %fin% netDefs$inNetSegID[netDefs$segid==segDF$segid[i]],]
     
+    # all water goes through  any segs w/ more water than the outflow
+    thisNetwork$flow=pmin(thisNetwork$flow,segDF$flow[i])
     #thisNetwork=merge(netDefs[netDefs$segid==segDF$segid[i]],segDF,by.x="inNetSegID",by.y="segid",sort=F)
     
     
     #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
-    segDF$meanResidence[i]=sum(thisNetwork$residence*thisNetwork$flow/max(thisNetwork$flow))
+    segDF$meanResidenceToSeg[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
     
   }
-  return(segDF)
+
+
+  
+  
+  return(segDF[,c("segid","indexFlow","flow","meanResidenceToSeg")])
   
 }
 
@@ -593,9 +632,11 @@ getUpstream_scLocation=function(scLocation,closestSegs_scLocations=getClosestSeg
   upstreamSegs=getUpstream(closestSeg)
   return(upstreamSegs)
 }
-# system.time({
-#   u=getUpstream_scLocation(147)
-# })
+
+maxSunAngleFun=function(doy){
+  43+23.45*sin((2*pi/360)*(360/365)*(doy-81))
+}
+
 getUsds=function(){
   if(!exists("global_usds",where=globalenv())){      #usds does not exist - create it
     global_usds=data.table(dbGetQuery(conn(),"SELECT us_segid, ds_segid FROM usds"))
@@ -633,7 +674,7 @@ getNetDefs=function(usds=getUsds() ){
 getAllFlowData=function(){
   if(!exists("global_allFlowData",where=globalenv())){      #does not exist - create it
     global_allFlowData=data.table(dbGetQuery(conn(), "SELECT AVG(value) as FLOW, locationid, datetime::date FROM data WHERE metric = 'flow' GROUP BY locationid, datetime::date;") )
-    f=global_allFlowData[global_allFlowData$locationid %fin% c(1,2),]
+    f=global_allFlowData[global_allFlowData$locationid %fin% c(1,2),]  #initialize %fin% indexing
     setkey(global_allFlowData, locationid)
     
     assign("global_allFlowData",global_allFlowData,envir=globalenv())     #assign to global environment for future use
@@ -712,30 +753,39 @@ getTribCount_segs=function(){
 
 getClosestSegs_scLocations=function(scBaseID=147){
   if(!exists("global_closestSegs_scLocations",where=globalenv())){
-    global_closestSegs_scLocations=data.frame(locationID=dbGetQuery(conn(),paste0("SELECT locations.locationid FROM locations WHERE ST_WITHIN(locations.geometry, (SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid = '",scBaseID,"'));")))
-  
-  matchToSeg=function(scLocation){
-    closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
+    global_closestSegs_scLocations=data.frame(locationID=dbGetQuery(conn(),paste0(
+      "SELECT locations.locationid FROM locations 
+      WHERE ST_WITHIN(locations.geometry, (SELECT watersheds.geometry FROM watersheds WHERE watersheds.outflowlocationid = '",scBaseID,"'));")))
+    global_closestSegs_scLocations=rbind(global_closestSegs_scLocations, data.frame(locationid = scBaseID))
+    
+    matchToSeg=function(scLocation){
+      closestSeg = dbGetQuery(conn(), paste0("SELECT streamsegments.segid, locations.locationid, ST_DISTANCE(streamSegments.geometry, locations.geometry) AS distance 
                           FROM streamsegments LEFT JOIN locations ON ST_DISTANCE(streamSegments.geometry, locations.geometry) < 50
                           WHERE locations.locationid = '", scLocation, "' 
                           ORDER BY distance ASC 
                           LIMIT 1;"))$segid
-    return(closestSeg)
-  }
-  global_closestSegs_scLocations$closestSeg=sapply(scLocations$locationid,matchToSeg)
-  assign("global_closestSegs_scLocations",global_closestSegs_scLocations,envir=globalenv())
+      return(closestSeg)
+    }
+    global_closestSegs_scLocations$closestSeg=sapply(global_closestSegs_scLocations$locationid,matchToSeg)
+    assign("global_closestSegs_scLocations",global_closestSegs_scLocations,envir=globalenv())
   }
   global_closestSegs_scLocations=get("global_closestSegs_scLocations",envir = globalenv())
   return(invisible(global_closestSegs_scLocations))
 }
 
-preFabData=list(global_usds=getUsds(),
-                global_netDefs=getNetDefs(),
-                global_allFlowData=getAllFlowData(),
-                global_locationAttributeTable=getLocationAttributeTable(),
-                global_airTempData=getAirTempData(),
-                global_streamSegTable=getStreamSegTable(),
-                global_flowModel=getFlowModel(),
-                global_tribCount_segs=getTribCount_segs(),
-                global_closestSegs_scLocations=getClosestSegs_scLocations()
-)
+buildPreFabDataList=function(){
+  
+  preFabData=list(global_usds=getUsds(),
+                  global_netDefs=getNetDefs(),
+                  global_allFlowData=getAllFlowData(),
+                  global_locationAttributeTable=getLocationAttributeTable(),
+                  global_airTempData=getAirTempData(),
+                  global_streamSegTable=getStreamSegTable(),
+                  global_flowModel=getFlowModel(),
+                  global_tribCount_segs=getTribCount_segs(),
+                  global_closestSegs_scLocations=getClosestSegs_scLocations()
+  )
+  assign("preFabData",preFabData,envir = globalenv())
+  return(invisible(preFabData))
+}
+

@@ -1,4 +1,5 @@
 source("~/Documents/R Workspace/SilverCreekQualityModel/functions.r")
+library(parallel)
 library(pbapply)
 dem=rast("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/wholeDem.tif")
 streamline=st_zm(st_read("~/Dropbox/SilverCreek/SilverCreekSpatial/StaticData/nhdFlowline_simplify.gpkg"))
@@ -89,11 +90,11 @@ secondHighest=function(x){
   return(x[2])
 }
 
-streamSegs$uaa=extract(uaa, vect(streamSegs),list=F,fun=secondHighest)[,2]
+streamSegs$uaa=extract(uaa, vect(streamSegs),fun=secondHighest)[,2]
 
-streamSegs$slope=(extract(dem, vect(streamSegs),list=F,fun=max)[,2]-extract(dem, vect(streamSegs),list=F,fun=min)[,2])/as.numeric(streamSegs$length)
+streamSegs$slope=(extract(dem, vect(streamSegs),fun=max)[,2]-extract(dem, vect(streamSegs),fun=min)[,2])/as.numeric(streamSegs$length)
 
-streamSegs$elevation=extract(dem, vect(streamSegs),list=F,fun=min)[,2]
+streamSegs$elevation=extract(dem, vect(streamSegs),fun=min)[,2]
 head(streamSegs)
 
 #write to db
