@@ -508,7 +508,7 @@ calcMeanResidence=function(ID=0,indexFlow=100,isSegID=F,useResidenceFunction=F){
   # all water goes through  any segs w/ more water than the outflow
   flowSegs$flow=pmin(flowSegs$flow,flowSegs$flow[flowSegs$uaa == max(flowSegs$uaa)])
   
-  meanRes=sum(flowSegs$residence*flowSegs$flow/max(flowSegs$flow))
+  meanRes=sum(flowSegs$residence*flowSegs$flow/flowSegs$flow[flowSegs$uaa == max(flowSegs$uaa)])
   return(meanRes)
 }
 
@@ -535,8 +535,8 @@ calcMeanResidence_allSegs=function(segDF,indexFlow=100,useResidenceFunction=F,ne
     # all water goes through  any segs w/ more water than the outflow
     thisNetwork$flow=pmin(thisNetwork$flow,segDF$flow[i])
     #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
-    segDF$meanResidence[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
-    
+    #segDF$meanResidence[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
+    segDF$meanResidence[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/segDF$flow[i])
   }
   return(segDF)
   
@@ -566,7 +566,9 @@ calcMeanResidenceForFlow=function(indexFlow,baseStreamSeg,useResidenceFunction=F
     
     
     #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
-    segDF$meanResidenceToSeg[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
+    #segDF$meanResidenceToSeg[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
+    segDF$meanResidenceToSeg[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/segDF$flow[i])
+    
     
   }
 
@@ -575,6 +577,72 @@ calcMeanResidenceForFlow=function(indexFlow,baseStreamSeg,useResidenceFunction=F
   
   return(segDF[,c("segid","indexFlow","flow","meanResidenceToSeg")])
   
+}
+
+
+
+
+calcSpecificResidence=function(indexFlow,baseStreamSeg,minFlow=0.01,netDefs=getNetDefs(), usds=getUsds()){
+  #baseStreamSeg=368
+  baseStreamSeg=usds[!usds$ds_segid %in% usds$us_segid]$ds_segid
+  segDF=data.table(distributeFlow(indexFlow,baseStreamSeg,isSegID=T))
+  segDF$flow=pmax(minFlow,segDF$flow)
+  segDF$this_sR=(segDF$length*3.28)/segDF$flow
+  segDF$sR=0
+  
+  headwaterSegments=usds$us_segid[!(usds$us_segid %fin% usds$ds_segid)]
+  
+  increment_sr=function(segID,segDF){
+    upSegs=usds$us_segid[usds$ds_segid==segID]
+    up_sR=sum(segDF$sR[segDF$segid %in% upSegs]*segDF$flow[segDF$segid %in% upSegs]) / sum(segDF$flow[segDF$segid %in% upSegs])
+    this_sR=up_sR+segDF$this_sR[segDF$segid==segID]
+    return(this_sR)
+  }
+  
+  thisSegs=headwaterSegments
+  segDF$sR[segDF$segid %in% thisSegs]=segDF$this_sR[segDF$segid %in% thisSegs]
+  while(!all(thisSegs==baseStreamSeg)){
+    thisSegs=thisSegs[thisSegs!=baseStreamSeg]
+    #print(length(thisSegs))
+    downSegs=usds$ds_segid[usds$us_segid %in% thisSegs]
+    for(ds in downSegs){
+      sR=increment_sr(ds,segDF)
+      segDF$sR[segDF$segid==ds]=sR
+    }
+    thisSegs=downSegs
+    
+  }
+  
+  names(segDF)[names(segDF)=="sR"]="specificResidenceToSeg"
+  
+  
+  for(i in 1:nrow(segDF)){
+    
+    thisNetwork=segDF[segDF$segid %fin% netDefs$inNetSegID[netDefs$segid==segDF$segid[i]],]
+    
+    # all water goes through  any segs w/ more water than the outflow
+    thisNetwork$flow=pmin(thisNetwork$flow,segDF$flow[i])
+    #thisNetwork=merge(netDefs[netDefs$segid==segDF$segid[i]],segDF,by.x="inNetSegID",by.y="segid",sort=F)
+    
+    
+    #flow-weighted mean residence time = sum (for all segments s){ (residenceTime_s * Qs) / max(Qs)}.  
+    #segDF$meanResidenceToSeg[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/max(thisNetwork$flow))
+    segDF$meanResidenceToSeg[i]=sum(thisNetwork$thisResidence*thisNetwork$flow/segDF$flow[i])
+    
+    
+  }
+  
+  return(segDF[,c("segid","indexFlow","flow","specificResidenceToSeg","meanResidenceToSeg")])
+}
+
+getSpecificResidence_location=function(scLocation,indexFlow,closestSegs_scLocations=getClosestSegs_scLocations(),residences=getResidences()){
+  
+  
+  
+  closestSeg=closestSegs_scLocations[closestSegs_scLocations$locationid==scLocation,]$closestSeg
+  
+  specificResidence=residences[residences$segid==closestSeg & residences$indexflow==round(indexFlow),]$specificresidencetoseg[1]
+  return(specificResidence)
 }
 
 # getUpstream=function(segid){
@@ -773,6 +841,20 @@ getClosestSegs_scLocations=function(scBaseID=147){
   return(invisible(global_closestSegs_scLocations))
 }
 
+
+getResidences=function(){
+  if(!exists("global_residences",where=globalenv())){
+    global_residences=dbGetQuery(conn(),"SELECT * FROM residences;")
+    assign("global_residences",global_residences,envir = globalenv())
+  }
+  global_residences=get("global_residences",envir = globalenv())
+
+  return(invisible(global_residences))
+}
+
+
+
+
 buildPreFabDataList=function(){
   
   preFabData=list(global_usds=getUsds(),
@@ -783,9 +865,11 @@ buildPreFabDataList=function(){
                   global_streamSegTable=getStreamSegTable(),
                   global_flowModel=getFlowModel(),
                   global_tribCount_segs=getTribCount_segs(),
-                  global_closestSegs_scLocations=getClosestSegs_scLocations()
+                  global_closestSegs_scLocations=getClosestSegs_scLocations(),
+                  global_residences=getResidences()
   )
   assign("preFabData",preFabData,envir = globalenv())
   return(invisible(preFabData))
 }
+
 

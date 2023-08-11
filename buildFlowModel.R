@@ -88,7 +88,7 @@ dredge(flowModel)
 #index flow is only useful when it interacts w/ other terms.
 
 
-#I like this one:
+
 # flowModel=lm(flowIndex~tribCount*indexFlow+uaa*indexFlow,data=flow,na.action = "na.fail")
 # summary(flowModel) #.815
 
@@ -129,30 +129,24 @@ summary(flowModel)
 
 baseStreamSeg=dbGetQuery(conn(),"SELECT segid FROM streamsegments ORDER BY uaa DESC LIMIT 1;")$segid
 
-thisIndexFlow=100
 
 #distribute flow and residence from index flow
-Rprof(tmp <- tempfile())
-mr=calcMeanResidenceForFlow(indexFlow=20,baseStreamSeg = baseStreamSeg,minFlow=1)
-Rprof()
-summaryRprof(tmp)
-
-
 
 
 dbGetQuery(conn(),"SELECT MIN(value), MAX(value) FROM data WHERE locationid = '144' AND metric = 'flow';")
 
-resTimeList=as.list(seq(from=1,to=600,by=1))
+resTimeList=as.list(seq(from=1,to=300,by=1))
 names(resTimeList)=resTimeList
 
 #singleThread
 #resTimeList=lapply(resTimeList,calcMeanResidenceForFlow,baseStreamSeg=baseStreamSeg)
 
-cores=max(1,parallel::detectCores()-6)
-resTimeList = mclapply(resTimeList,calcMeanResidenceForFlow,baseStreamSeg=baseStreamSeg,mc.cores = cores )
+cores=max(1,parallel::detectCores()-4)
+resTimeList = mclapply(resTimeList,calcSpecificResidence,baseStreamSeg=baseStreamSeg,mc.cores = cores )
 
 resTimeDF=do.call(rbind, resTimeList)
 names(resTimeDF)=tolower(names(resTimeDF))
+
 dbExecute(conn(),"TRUNCATE TABLE residences;")
 dbWriteTable(conn(),"residences",resTimeDF,append=T)
 #dbExecute(conn(),"CREATE INDEX flowindex ON residences (indexflow);")

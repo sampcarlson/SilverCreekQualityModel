@@ -22,9 +22,9 @@ getAirTempDistribution=function(forecastDate){
   return(forecastAirTemps)
 }
 
-predictSegTemperatures=function(indexFlow, meanAirTemp_F, forecastDate, streamSegs, tempModel=temperatureModel,airTempReferenceLocation=airTempLocation){
+predictSegTemperatures=function(indexFlow, maxAirTemp_F, forecastDate, streamSegs, tempModel=temperatureModel,airTempReferenceLocation=airTempLocation){
   
-  meanAirTemp = 5/9*(meanAirTemp_F - 32)
+  maxAirTemp = 5/9*(maxAirTemp_F - 32)
   
   forecastDate=as.Date(forecastDate)
   forecastDOY=as.numeric(format.Date(forecastDate, "%j"))
@@ -33,7 +33,7 @@ predictSegTemperatures=function(indexFlow, meanAirTemp_F, forecastDate, streamSe
   
   segTemperatures=merge(streamSegs, segTemperatures, by="segid")
   segTemperatures$maxSunElevation=maxSunAngleFun(forecastDOY)
-  segTemperatures$meanAirTemp=meanAirTemp
+  segTemperatures$maxAirTemp=maxAirTemp
   
   segTemperatures$temperature_F=  ( predict(tempModel,newdata=segTemperatures) * (9/5) ) + 32 
   return(segTemperatures)
@@ -41,22 +41,19 @@ predictSegTemperatures=function(indexFlow, meanAirTemp_F, forecastDate, streamSe
 }
 
 
-segTemperatures=predictSegTemperatures(indexFlow=50,meanAirTemp_F = 70, forecastDate = "2021-07-05",streamSegs=streamSegs,tempModel = temperatureModel)
+segTemperatures=predictSegTemperatures(indexFlow=140,maxAirTemp_F = 90, forecastDate = "2021-07-05",streamSegs=streamSegs,tempModel = temperatureModel)
 mean(segTemperatures$temperature_F,na.rm=T)
 
 hist(segTemperatures$temperature_F)
 #hist(segTemperatures$flow)
-#hist(segTemperatures$residence)
+hist(segTemperatures$residence)
 sum(segTemperatures$temperature_F>70,na.rm=T)
 
 segTemperatures[segTemperatures$segid %in% c(6:10,370),]
 
-topSegs=segTemperatures[segTemperatures$segid %in% c(6:10),]
-sum(topSegs$flow*49.53170/max(topSegs$flow))
 
-r=0
-m=max(topSegs$flow)
-for(i in 1:nrow(topSegs)){
-  r=r+(topSegs$flow[i]*49.53170)
-}
-r/m
+plot(segTemperatures[,c("geometry","temperature_F")],lwd=2)
+
+
+
+
